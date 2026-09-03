@@ -171,9 +171,19 @@ init -1000 python:
         _dlss_view_invalidate()
         renpy.restart_interaction()
 
+    import sys as _dlss_sys
+
+    def _dlss_called_from_manipulator():
+        # im.Scale, im.Composite, im.MatrixColor… (module renpy.display.im) exigent un ImageBase : on leur laisse
+        # l'image d'origine, sinon le jeu plante (« '_DlssCompare' object has no attribute 'get_oversample' »).
+        try:
+            return _dlss_sys._getframe(2).f_globals.get("__name__", "") == "renpy.display.im"
+        except Exception:
+            return False
+
     def Image(arg, loose=False, **properties):
         rv = _dlss_orig_Image(arg, loose=loose, **properties)
-        if isinstance(rv, _dlss_im.Image):
+        if isinstance(rv, _dlss_im.Image) and not _dlss_called_from_manipulator():
             hd = _dlss_hd_path(rv.filename)
             if hd:
                 _dlss_hd_stats["hd"] += 1
