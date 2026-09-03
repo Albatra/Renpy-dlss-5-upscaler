@@ -226,7 +226,29 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    vérification `zipfile` + `apksigner verify` (build-tools installés par Gradle), « Ouvrir le dossier », « Installer sur le
    téléphone » (`platform-tools\adb.exe install -r`).
 
-Limites : APK ≤ ≈ 2 Go (Android) ; pas d'expansion APK ni de clé Google Play ; Ren'Py < 7.0 non pris en charge ; Ren'Py ≥ 7.8/8.3
+5. **Données séparées (gros jeux)** — `BuildConfig.data_mode = "external"` : `stage_build` met dans la copie de construction
+   uniquement scripts, `gui/`, polices, audio (sauf `ext_audio`) et envoie images, vidéos, `.rpa` restants dans le pack
+   `android\out\<jeu>\<paquet>-data\game\` (liens physiques `os.link` si même volume, sinon copies) ; il écrit dans `game\`
+   de la copie le hook `zz_renpyhd_extdata.rpy` (source `renpyhd_extdata.rpy`, Python 2/3) et le manifeste
+   `renpyhd_extdata.json` (paquet, nombre/taille des fichiers, 3 images témoins). Sur le téléphone, le moteur Ren'Py met
+   nativement `ANDROID_PUBLIC/game` = `/sdcard/Android/data/<paquet>/files/game/` en tête de `config.searchpath`
+   (`renpy/main.py` 7.3.5, `android_searchpath` 8.1.2, `predefined_searchpath` 7.8.7 / 8.6.0) ; le hook ajoute les replis
+   `Android/obb/<paquet>/game/` et `ANDROID_OLD_PUBLIC/game`, indexe les `.rpa` trouvés (`config.archives` + réindexation),
+   accepte `RENPYHD_EXTDATA` pour les tests sur PC, et si les images témoins manquent installe `config.missing_image_callback`
+   et un écran overlay bilingue (chemins exacts, Réessayer / Quitter). `adb_push_data` : `adb shell mkdir -p` puis `adb push
+   <pack>\game /sdcard/Android/data/<paquet>/files/` (dossier privé de l'app : accessible à adb et à l'app même sous Android
+   11+ ; un gestionnaire de fichiers sur le téléphone ne peut en général pas y écrire, l'USB/MTP depuis Windows oui).
+   Recherche RAPT : l'expansion native (`.android.json` `expansion`, OBB `main.<code>.<paquet>.obb`, `ANDROID_EXPANSION`,
+   `DownloaderActivity` Google Play) n'existe complète que dans RAPT 7.3.5 ; 7.8.7 / 8.1.2 / 8.6.0 n'ont plus que le champ
+   `expansion = False` (8.1.2 garde du code mort dans `loader.py`) et passent par les asset packs Play (`ANDROID_PACK_FF1..4`,
+   bundle uniquement). Limites d'installation : format ZIP sans ZIP64 → 4 Go absolus ; en pratique ≈ 2 Go (entiers 32 bits
+   signés dans plusieurs installateurs) — documentation Ren'Py : « Universal APKs can be up to 2 GB in size ».
+6. **Mes APK** — `write_build_manifest` écrit `android\out\<jeu>\build.json` (jeu, paquet, version, code, date, SDK, famille,
+   mode, APK, pack, signature) ; `list_builds` relit ces manifestes et déduit ceux des dossiers antérieurs (nom de l'APK,
+   `android.json` de la copie, journaux) ; `delete_build`, `adb_uninstall`, `list_caches` / `delete_cache` (jamais `keys\`),
+   `export_keys`.
+
+Limites : APK ≤ ≈ 2 Go (4 Go absolus) — au-delà, données séparées ; pas de clé Google Play ; Ren'Py < 7.0 non pris en charge ; Ren'Py ≥ 7.8/8.3
 prend la version de l'APK dans `config.version` du jeu (chiffres et points seulement, sinon `1.0`) ; les scripts décompilés par unrpyc
 ne servent qu'à la copie de construction. Drapeaux : `ANDROID_BUNDLE_ENABLED`, `ANDROID_ADB_ENABLED`, `ANDROID_UNRPYC_ENABLED`.
 

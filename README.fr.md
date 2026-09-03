@@ -114,11 +114,23 @@ Android Packaging Tool) — pilotés en ligne de commande sans aucune question. 
    n'est installé dans Windows : tout vit dans `android\` à côté de l'application.
 3. **Configurer** — nom, identifiant du paquet (`com.renpyhd.<jeu>`), version, orientation, icône, Internet, vidéos incluses
    ou non, limite de taille des images, archives `.rpa` déjà extraites exclues, app bundle `.aab`.
-4. **Construire** — barre de progression, journal, annulation ; puis chemin et taille de l'APK, vérification (manifeste,
-   fichiers du jeu, signature), *Ouvrir le dossier*, *Installer sur le téléphone (adb)*.
+4. **Construire** — barre de progression, journal, annulation ; puis chemin et taille de l'APK (et du pack de données),
+   vérification (manifeste, fichiers du jeu, signature), *Ouvrir le dossier*, *Installer sur le téléphone (adb)*, *Copier
+   les données sur le téléphone (adb)*.
+5. **Mes APK** — tout ce qui a été construit (jeu, paquet, version, date, SDK, mode, tailles, signature) : ouvrir,
+   installer / désinstaller sur le téléphone, supprimer ; nettoyage des SDK / JDK / caches non utilisés ; export des clés.
 
 Fonctionne avec les SDK Ren'Py 7.4+ et 8.x ; les jeux Ren'Py 7.0–7.3 sont construits avec le dernier Ren'Py 7 (leur RAPT
-d'origine dépend de dépôts fermés). APK universel ≤ ≈ 2 Go ; pas d'expansion APK ni de clé Google Play.
+d'origine dépend de dépôts fermés). Pas de clé Google Play.
+
+**Gros jeux (sans réduire les images)** : un APK doit rester sous ≈ 2 Go (4 Go absolus, format ZIP). À l'étape 3, *Données
+du jeu : séparées* construit un **APK léger** (moteur, scripts, interface, polices, audio : quelques dizaines de Mo) et un
+**pack de données** `android\out\<jeu>\<paquet>-data\game\` avec **toutes les images et vidéos, sans réduction** (liens
+physiques si le pack est sur le même disque que le jeu : instantané, 0 octet de plus). Sur le téléphone, ce dossier `game`
+va dans `Android/data/<paquet>/files/game/` — le dossier que le moteur Ren'Py (7.x comme 8.x) lit nativement — via le
+bouton adb, ou par câble USB depuis Windows. Si les données manquent, le jeu affiche un écran clair avec le chemin exact au
+lieu de planter. Le mécanisme d'expansion (OBB) de RAPT n'existe plus que dans Ren'Py 7.3 et dépend de Google Play : il
+n'est pas utilisé.
 
 ## FAQ
 

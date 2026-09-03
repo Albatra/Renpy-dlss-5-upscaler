@@ -16,6 +16,25 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   games are built with the latest Ren'Py 7 SDK (their RAPT depends on the closed jcenter/bintray repositories); versions
   missing from renpy.org fall back to the next patch of the same series, then the latest of the same major.
 - Strings in the six interface languages, Help tab section, README sections.
+- **Big games without downscaling — separate data**: step 3 offers *Game data: inside the APK (≈ 2 GB limit) / separate
+  (recommended for big games)*. Separate mode builds a **light APK** (engine, scripts, `gui/`, fonts, audio) and a **data
+  pack** `android\out\<game>\<package>-data\game\` with every image and video at full size (hard links when the pack is on
+  the same drive as the game: instant, no extra space). On the phone the pack's `game` folder goes into
+  `Android/data/<package>/files/game/` — the folder every Ren'Py 7.x / 8.x engine natively puts first in
+  `config.searchpath` — with `Android/obb/<package>/game/` as a fallback. A `zz_renpyhd_extdata.rpy` hook (Python 2/3)
+  indexes `.rpa` archives dropped there, supports a desktop test override (`RENPYHD_EXTDATA`) and shows a bilingual
+  "data not found" screen with the exact paths instead of crashing. New button *Copy the data to the phone (adb)*
+  (`adb shell mkdir -p` + `adb push` into the app-private external folder, which adb and the app can write even under
+  Android 11+ scoped storage), manual-copy instructions and a `LISEZMOI-README.txt` in the pack. RAPT's own expansion
+  (OBB) mechanism was checked in the 7.3.5 / 7.8.7 / 8.1.2 / 8.6.0 sources: it only survives in Ren'Py 7.3 and relies on
+  Google Play's downloader, so it is not used.
+- **My APKs** (step 5): table of everything under `android\out\` (game, package, version / code, build date, Ren'Py SDK,
+  data mode, APK size, data pack size, signature) from a `build.json` manifest written by each build (backfilled from
+  existing folders), with *Open folder*, *Install on the phone (adb, + data)*, *Uninstall from the phone (adb)*, *Delete*
+  (with confirmation, whole `out\<name>` folder + build copy), *Refresh*; *Clean unused SDKs* helper (Ren'Py SDKs, JDKs,
+  Gradle cache, downloads, build copies with sizes and a guarded delete) and *Export the keys…* (PowerShell folder picker).
+- Analysis now counts audio files and `gui/` images; the size warning names the real limits (≈ 2 GB practical, 4 GB
+  absolute for the ZIP format) and suggests separate data.
 
 ## [1.0.0] — 2026-09-03
 

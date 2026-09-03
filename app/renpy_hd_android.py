@@ -50,12 +50,21 @@ VERSIONS_CACHE = ANDROID_ROOT / "renpy_versions.json"
 MATRIX_FILE = APP_DIR / "android_matrix.json"
 ADAPTER_SRC = APP_DIR / "renpyhd_android_adapter.rpy"
 ADAPTER_NAME = "zz_renpyhd_android.rpy"
+EXTDATA_HOOK_SRC = APP_DIR / "renpyhd_extdata.rpy"     # hook « données externes » (copié dans game\ de la copie de construction)
+EXTDATA_HOOK_NAME = "zz_renpyhd_extdata.rpy"
+EXTDATA_MANIFEST = "renpyhd_extdata.json"              # manifeste lu par le hook (paquet, fichiers témoins, taille du pack)
+BUILD_MANIFEST = "build.json"                          # écrit dans android\out\<jeu>\ après chaque construction (gestionnaire « Mes APK »)
+AUDIO_EXTS = (".ogg", ".opus", ".mp3", ".wav", ".flac", ".m4a")
+EXT_AUDIO_THRESHOLD = 200 * 1024 * 1024        # au-delà, l'audio est proposé dans le pack de données
+APK_SOFT_LIMIT = 2 * 1024 ** 3                 # au-delà : nombreux appareils refusent l'installation (entiers 32 bits signés dans l'installateur)
+APK_HARD_LIMIT = 4 * 1024 ** 3                 # limite du format ZIP sans ZIP64 (offsets 32 bits) : un APK ne peut pas dépasser 4 Go
+DATA_MODES = ("apk", "external")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RenPyHD/1.1"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 ENGINE_OVERHEAD = 45 * 1024 * 1024          # moteur Ren'Py + bibliothèques natives dans l'APK (≈ 35–55 Mo)
 EXCLUDED_DIRS = {"saves", "cache", "_dlss_backup", "renpyhd_export", "__pycache__"}
 EXCLUDED_DIR_PREFIXES = ("hd2x",)
-EXCLUDED_FILE_PREFIXES = ("zz_dlss_hd.rpy", "zz_renpyhd_tl.rpy", "zz_renpyhd_check.rpy")
+EXCLUDED_FILE_PREFIXES = ("zz_dlss_hd.rpy", "zz_renpyhd_tl.rpy", "zz_renpyhd_check.rpy", "zz_renpyhd_extdata.rpy", "renpyhd_extdata.json")
 ORIENTATIONS = ("sensorLandscape", "portrait", "sensor")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 ANDROID_BUNDLE_ENABLED = True       # app bundle (.aab) pour Ren'Py ≥ 7.4 / 8.x
@@ -192,6 +201,9 @@ class AndroidAnalysis:
     images_count: int = 0
     videos_bytes: int = 0
     videos_count: int = 0
+    audio_bytes: int = 0
+    audio_count: int = 0
+    gui_images_bytes: int = 0        # images sous game/gui (toujours dans l'APK : menus)
     other_bytes: int = 0
     excluded_bytes: int = 0
     existing_json: dict | None = None
@@ -209,6 +221,14 @@ class AndroidAnalysis:
         images = min(self.images_bytes, image_budget) if image_budget else self.images_bytes
         other = self.other_bytes - (self.rpa_extracted_bytes if skip_extracted_rpa else 0)
         return images + (self.videos_bytes if include_videos else 0) + other + ENGINE_OVERHEAD
+
+    def estimated_split(self, ext_audio: bool, skip_extracted_rpa: bool = True) -> tuple[int, int]:
+        """Mode « données séparées » : (APK léger, pack de données). Les images de gui/ restent dans l'APK."""
+        other = self.other_bytes - (self.rpa_extracted_bytes if skip_extracted_rpa else 0)
+        rpa_left = self.rpa_bytes - (self.rpa_extracted_bytes if skip_extracted_rpa else 0)
+        pack = (self.images_bytes - self.gui_images_bytes) + self.videos_bytes + (self.audio_bytes if ext_audio else 0) + rpa_left
+        apk = other - rpa_left - (self.audio_bytes if ext_audio else 0) + self.gui_images_bytes + ENGINE_OVERHEAD
+        return max(apk, ENGINE_OVERHEAD), max(pack, 0)
 
 
 def _is_excluded_dir(name: str) -> bool:
@@ -261,12 +281,17 @@ def analyze_game(root: str, refresh_versions: bool = False) -> AndroidAnalysis:
             if ext in core.IMAGE_EXTS:
                 a.images_bytes += size
                 a.images_count += 1
+                if rel.lower().startswith("gui/"):
+                    a.gui_images_bytes += size
             elif ext in core.VIDEO_EXTS:
                 a.videos_bytes += size
                 a.videos_count += 1
             elif ext == ".rpy":
                 continue        # jamais empaqueté (liste noire RAPT)
             else:
+                if ext in AUDIO_EXTS:
+                    a.audio_bytes += size
+                    a.audio_count += 1
                 a.other_bytes += size
     if a.rpa_count:
         try:
@@ -776,6 +801,9 @@ class BuildConfig:
     skip_extracted_rpa: bool = True
     prefer_rpyc: bool = False        # scripts compilés du jeu tels quels (les .rpy ayant un .rpyc ne sont pas copiés : pas de recompilation)
     org: str = "RenPyHD"
+    data_mode: str = "apk"           # apk : tout dans l'APK (limite ≈ 2 Go) ; external : APK léger + pack de données (images, vidéos, gros audio)
+    ext_audio: bool = False          # external : l'audio va aussi dans le pack
+    link_pack: bool = True           # external : liens physiques NTFS vers les fichiers du jeu quand le pack est sur le même disque (instantané, 0 octet)
 
 
 def slug(name: str) -> str:
@@ -815,6 +843,8 @@ def default_config(a: AndroidAnalysis, sdk_version: str = "") -> BuildConfig:
     cfg.internet = "INTERNET" in (ex.get("permissions") or [])
     cfg.icon_path = str(a.window_icon) if a.window_icon else ""
     cfg.decompile = bool(a.rpy_missing)
+    cfg.data_mode = "external" if a.estimated_apk(False) > APK_SOFT_LIMIT else "apk"
+    cfg.ext_audio = a.audio_bytes > EXT_AUDIO_THRESHOLD
     return cfg
 
 
@@ -831,7 +861,23 @@ def validate_config(cfg: BuildConfig) -> list[str]:
         errs.append(T("android.cfg.err_numeric"))
     if cfg.orientation not in ORIENTATIONS:
         errs.append(T("android.cfg.err_orientation"))
+    if cfg.data_mode not in DATA_MODES:
+        errs.append(T("android.cfg.err_data_mode"))
     return errs
+
+
+def build_name_for(cfg: BuildConfig) -> str:
+    return slug(cfg.package.rsplit(".", 1)[-1] or cfg.name)
+
+
+def pack_dir_for(cfg: BuildConfig) -> Path:
+    """Dossier du pack de données : android\\out\\<jeu>\\<paquet>-data\\ (contient game\\)."""
+    return OUT_DIR / build_name_for(cfg) / f"{cfg.package.strip().lower()}-data"
+
+
+def phone_data_path(package: str) -> str:
+    """Chemin sur le téléphone où le moteur Ren'Py cherche les données externes (ANDROID_PUBLIC/game)."""
+    return f"/sdcard/Android/data/{package}/files/game"
 
 
 def android_json(cfg: BuildConfig, sdk: SdkInfo) -> dict:
@@ -881,6 +927,33 @@ class StageResult:
     rpy_skipped: int = 0
     excluded: list[str] = field(default_factory=list)
     elapsed: float = 0.0
+    pack_dir: Path | None = None          # mode « données séparées » : dossier du pack (contient game\)
+    pack_files: int = 0
+    pack_bytes: int = 0
+    pack_linked: bool = False             # pack fait de liens physiques (même volume NTFS) plutôt que de copies
+    probes: list[str] = field(default_factory=list)
+
+
+def _same_volume(a: Path, b: Path) -> bool:
+    try:
+        return os.path.splitdrive(str(a.resolve()))[0].lower() == os.path.splitdrive(str(b.resolve()))[0].lower()
+    except Exception:
+        return False
+
+
+def _place_file(src: Path, dst: Path, link: bool) -> bool:
+    """Copie `src` vers `dst` (lien physique si `link`, sinon copie). Renvoie True si un lien a été créé."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if link:
+        try:
+            if dst.exists():
+                dst.unlink()
+            os.link(src, dst)
+            return True
+        except OSError:
+            pass
+    shutil.copy2(src, dst)
+    return False
 
 
 def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callable[[str], None], on_progress: Callable[[Progress], None],
@@ -888,18 +961,62 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
     r"""Copie de construction sous android\build\<jeu>\ : game/ filtré (jamais hd2x*, _dlss_backup, hook, saves, cache),
     vidéos et budget d'images selon la configuration, tl/ conservé, .android.json, icônes, clés (mode projet)."""
     t0 = time.time()
-    build_dir = BUILD_DIR / slug(cfg.package.rsplit(".", 1)[-1] or cfg.name)
+    build_dir = BUILD_DIR / build_name_for(cfg)
     res = StageResult(build_dir)
     skip_rpa = set(a.rpa_extracted) if cfg.skip_extracted_rpa else set()
     if build_dir.exists():
         log(T("android.log.stage_clean", dir=build_dir))
         shutil.rmtree(build_dir)
     (build_dir / "game").mkdir(parents=True)
-    budget = int(cfg.image_budget_mb) * 1024 * 1024 if cfg.image_budget_mb else 0
-    total_expected = a.included_bytes if cfg.include_videos else a.included_bytes - a.videos_bytes
+    external = cfg.data_mode == "external"
+    pack_dir = pack_dir_for(cfg) if external else None
+    link = False
+    if external and pack_dir is not None:
+        res.pack_dir = pack_dir
+        if pack_dir.exists():
+            log(T("android.log.pack_clean", dir=pack_dir))
+            shutil.rmtree(pack_dir)
+        (pack_dir / "game").mkdir(parents=True)
+        link = bool(cfg.link_pack) and _same_volume(a.game, pack_dir)
+        log(T("android.log.pack_mode", dir=pack_dir, how=T("android.log.pack_linked") if link else T("android.log.pack_copied")))
+    if external:
+        budget = 0                          # tout va dans le pack : pas de limite d'images
+    else:
+        budget = int(cfg.image_budget_mb) * 1024 * 1024 if cfg.image_budget_mb else 0
+    total_expected = a.included_bytes if (cfg.include_videos or external) else a.included_bytes - a.videos_bytes
     p = Progress(phase=T("android.phase.stage"))
     copied = 0
     last = 0.0
+
+    def to_pack(rel: str, ext: str) -> bool:
+        if not external:
+            return False
+        low = rel.lower()
+        if ext in core.IMAGE_EXTS:
+            return not low.startswith("gui/")
+        if ext in core.VIDEO_EXTS or ext == ".rpa":
+            return True
+        return bool(cfg.ext_audio) and ext in AUDIO_EXTS
+
+    def place(sp: Path, rel: str, size: int) -> None:
+        """Copie un fichier de game/ soit dans la copie de construction, soit dans le pack de données."""
+        ext = sp.suffix.lower()
+        if to_pack(rel, ext):
+            assert pack_dir is not None
+            if _place_file(sp, pack_dir / "game" / rel, link):
+                res.pack_linked = True
+            res.pack_files += 1
+            res.pack_bytes += size
+            if ext in core.IMAGE_EXTS and len(res.probes) < 3:
+                res.probes.append(rel)
+        else:
+            dst = build_dir / "game" / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(sp, dst)
+            res.files += 1
+            res.bytes += size
+            if ext in core.IMAGE_EXTS:
+                res.images_bytes += size
 
     def tick(size: int, detail: str) -> None:
         nonlocal copied, last
@@ -926,7 +1043,7 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
                     continue
                 sp = Path(dirpath) / fn
                 ext = sp.suffix.lower()
-                if ext in core.VIDEO_EXTS and not cfg.include_videos:
+                if ext in core.VIDEO_EXTS and not cfg.include_videos and not external:
                     res.videos_skipped += 1
                     continue
                 if ext == ".rpy" and cfg.prefer_rpyc and sp.with_suffix(".rpyc").is_file():
@@ -936,11 +1053,7 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
                     size = sp.stat().st_size
                 except OSError:
                     continue
-                shutil.copy2(sp, dst / rel / fn)
-                res.files += 1
-                res.bytes += size
-                if ext in core.IMAGE_EXTS:
-                    res.images_bytes += size
+                place(sp, (rel_root / rel / fn).relative_to("game").as_posix(), size)
                 tick(size, (rel_root / rel / fn).as_posix())
 
     game_src, game_dst = a.game, build_dir / "game"
@@ -963,10 +1076,7 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
                     if sub.is_dir():
                         copy_tree(sub, game_dst / item.name / sub.name, Path("game") / item.name / sub.name)
                     else:
-                        shutil.copy2(sub, game_dst / item.name / sub.name)
-                        res.files += 1
-                        res.bytes += size
-                        res.images_bytes += size
+                        place(sub, f"{item.name}/{sub.name}", size)
                         tick(size, sub.name)
                 continue
             copy_tree(item, game_dst / item.name, Path("game") / item.name)
@@ -974,19 +1084,23 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
             if _is_excluded_file(item.name) or item.name in skip_rpa:
                 res.excluded.append(item.name)
                 continue
-            if item.suffix.lower() in core.VIDEO_EXTS and not cfg.include_videos:
+            if item.suffix.lower() in core.VIDEO_EXTS and not cfg.include_videos and not external:
                 res.videos_skipped += 1
                 continue
             if item.suffix.lower() == ".rpy" and cfg.prefer_rpyc and item.with_suffix(".rpyc").is_file():
                 res.rpy_skipped += 1
                 continue
-            shutil.copy2(item, game_dst / item.name)
             size = item.stat().st_size
-            res.files += 1
-            res.bytes += size
-            if item.suffix.lower() in core.IMAGE_EXTS:
-                res.images_bytes += size
+            place(item, item.name, size)
             tick(size, item.name)
+    if external and pack_dir is not None:
+        # hook + manifeste dans la copie de construction (donc dans l'APK), mode d'emploi dans le pack
+        shutil.copy2(EXTDATA_HOOK_SRC, build_dir / "game" / EXTDATA_HOOK_NAME)
+        manifest = {"package": cfg.package.strip().lower(), "name": cfg.name.strip(), "version": cfg.version.strip(),
+                    "files": res.pack_files, "bytes": res.pack_bytes, "probe": res.probes, "generator": "RenPyHD"}
+        (build_dir / "game" / EXTDATA_MANIFEST).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (pack_dir / "LISEZMOI-README.txt").write_text(pack_readme(cfg, res), encoding="utf-8")
+        log(T("android.log.pack_done", files=res.pack_files, size=core.human_size(res.pack_bytes), dir=pack_dir))
     # présplash et fichiers android-* du jeu d'origine (s'ils existent)
     for extra in a.root.glob("android-*.*"):
         if extra.is_file():
@@ -1009,6 +1123,29 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
     if res.rpy_skipped:
         log(T("android.log.stage_rpy_skipped", n=res.rpy_skipped))
     return res
+
+
+def pack_readme(cfg: BuildConfig, st: StageResult) -> str:
+    pkg = cfg.package.strip().lower()
+    return (
+        f"RenPyHD - pack de donnees / data pack : {cfg.name.strip()} ({pkg}) - {st.pack_files} fichiers / files, {core.human_size(st.pack_bytes)}\n\n"
+        "FR - Ce dossier contient les images, videos (et parfois l'audio) du jeu, livres a cote de l'APK.\n"
+        "     Copiez le dossier  game  (tout entier) dans ce dossier du telephone, puis lancez le jeu :\n"
+        f"       Android/data/{pkg}/files/game/\n"
+        "     Le plus simple : RenPyHD > Android (APK) > Copier les donnees sur le telephone (adb), ou en ligne de commande :\n"
+        f"       adb install -r <fichier.apk>\n       adb shell mkdir -p /sdcard/Android/data/{pkg}/files\n       adb push game /sdcard/Android/data/{pkg}/files/\n"
+        "     Copie manuelle (cable USB / gestionnaire de fichiers) : Android 11 et plus n'autorise pas toujours l'ecriture dans\n"
+        "     Android/data depuis un gestionnaire de fichiers ; par USB depuis Windows (MTP) cela fonctionne en general, sinon adb.\n"
+        f"     Repli accepte par le jeu : Android/obb/{pkg}/game/\n\n"
+        "EN - This folder holds the game's images, videos (sometimes audio), shipped next to the APK.\n"
+        "     Copy the whole  game  folder into this folder on the phone, then start the game:\n"
+        f"       Android/data/{pkg}/files/game/\n"
+        "     Easiest: RenPyHD > Android (APK) > Copy the data to the phone (adb), or from a command line:\n"
+        f"       adb install -r <file.apk>\n       adb shell mkdir -p /sdcard/Android/data/{pkg}/files\n       adb push game /sdcard/Android/data/{pkg}/files/\n"
+        "     Manual copy (USB cable / file manager): on Android 11+ a file manager may not be allowed to write into Android/data;\n"
+        "     USB from Windows (MTP) usually works, otherwise use adb.\n"
+        f"     Fallback accepted by the game: Android/obb/{pkg}/game/\n"
+    )
 
 
 def decompile_missing(sdk: SdkInfo, build_dir: Path, missing: list[str], log: Callable[[str], None], cancel: threading.Event) -> tuple[int, list[str]]:
@@ -1246,3 +1383,272 @@ def open_folder(path: Path) -> None:
         os.startfile(str(path))  # type: ignore[attr-defined]
     except Exception:
         pass
+
+
+def adb_push_data(sdk: SdkInfo, pack_dir: Path, package: str, log: Callable[[str], None], cancel: threading.Event | None = None) -> tuple[int, str]:
+    r"""Copie le pack de données (pack_dir\game) dans /sdcard/Android/data/<paquet>/files/game via adb (dossier privé de l'app :
+    accessible à adb et à l'application, sans permission, y compris sous Android 11+ à stockage cloisonné)."""
+    files_dir = phone_data_path(package).rsplit("/", 1)[0]
+    src = pack_dir / "game"
+    if not src.is_dir():
+        return 1, T("android.err.no_pack", dir=pack_dir)
+    out: list[str] = []
+    for cmd in ([str(sdk.adb), "shell", "mkdir", "-p", files_dir], [str(sdk.adb), "push", str(src), files_dir + "/"]):
+        log("$ " + " ".join(cmd))
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                creationflags=NO_WINDOW)
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                out.append(line)
+                log(line)
+            if cancel is not None and cancel.is_set():
+                proc.kill()
+                proc.wait()
+                return 130, "\n".join(out)
+        proc.wait()
+        if proc.returncode:
+            return proc.returncode or 1, "\n".join(out)
+    # contrôle : nombre de fichiers présents sur le téléphone
+    try:
+        proc = subprocess.run([str(sdk.adb), "shell", "find", phone_data_path(package), "-type", "f", "|", "wc", "-l"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=600)
+        out.append(T("android.log.push_count", n=proc.stdout.strip() or "?"))
+        log(out[-1])
+    except Exception:
+        pass
+    return 0, "\n".join(out)
+
+
+def adb_uninstall(sdk: SdkInfo, package: str, log: Callable[[str], None]) -> tuple[int, str]:
+    cmd = [str(sdk.adb), "uninstall", package]
+    log("$ " + " ".join(cmd))
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=600)
+    except Exception as exc:
+        return 1, str(exc)
+    out = (proc.stdout + proc.stderr).strip()
+    log(out)
+    return proc.returncode or 0, out
+
+
+def any_adb() -> Path | None:
+    """adb.exe d'un SDK installé (le plus récent), pour le gestionnaire quand aucun environnement n'est chargé."""
+    for v in reversed(installed_sdk_versions()):
+        sdk = inspect_sdk(sdk_root_for(v), v)
+        if sdk and sdk.adb.is_file():
+            return sdk.adb
+    return None
+
+
+def sdk_with_adb() -> SdkInfo | None:
+    for v in reversed(installed_sdk_versions()):
+        sdk = inspect_sdk(sdk_root_for(v), v)
+        if sdk and sdk.adb.is_file():
+            return sdk
+    return None
+
+
+# ----------------------------------------------------------------------------
+# Gestionnaire « Mes APK » : manifestes android\out\<jeu>\build.json
+# ----------------------------------------------------------------------------
+def dir_size(path: Path) -> int:
+    total = 0
+    try:
+        for f in path.rglob("*"):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return total
+
+
+def write_build_manifest(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, st: StageResult | None, r: BuildResult, verify: dict | None) -> Path | None:
+    if not r.out_dir:
+        return None
+    main = pick_main_apk(r.files)
+    d = {
+        "generator": "RenPyHD", "name": cfg.name.strip(), "package": cfg.package.strip().lower(), "version": cfg.version.strip(),
+        "numeric_version": int(cfg.numeric_version), "game_root": str(a.root), "renpy_version": a.version, "sdk_version": sdk.version,
+        "sdk_family": sdk.family, "built": time.time(), "built_text": time.strftime("%Y-%m-%d %H:%M"),
+        "data_mode": cfg.data_mode, "apk": main.name if main else "", "apk_bytes": main.stat().st_size if main else 0,
+        "files": [f.name for f in r.files], "bundle": bool(cfg.bundle), "elapsed": r.elapsed,
+        "pack_dir": st.pack_dir.name if (st and st.pack_dir) else "", "pack_files": st.pack_files if st else 0, "pack_bytes": st.pack_bytes if st else 0,
+        "pack_linked": bool(st.pack_linked) if st else False, "signed": (verify or {}).get("signed"), "phone_data_path": phone_data_path(cfg.package.strip().lower()),
+    }
+    path = r.out_dir / BUILD_MANIFEST
+    path.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+_APK_NAME_RE = re.compile(r"^(?P<pkg>[a-z_][\w]*(?:\.[a-z_][\w]*)+?)(?:-(?P<ver>\d+(?:\.\d+)*))?(?:-(?P<num>\d+))?-(?:universal-)?release\.apk$", re.I)
+
+
+def _backfill_manifest(out_dir: Path) -> dict:
+    """Manifeste déduit pour un dossier construit avant l'existence de build.json (nom d'APK, android.json de la copie, journaux)."""
+    apks = sorted([f for f in out_dir.iterdir() if f.suffix.lower() in (".apk", ".aab")], key=lambda f: f.stat().st_size, reverse=True)
+    main = pick_main_apk(apks)
+    d: dict = {"generator": "", "name": out_dir.name, "package": "", "version": "", "numeric_version": 0, "renpy_version": "", "sdk_version": "",
+               "sdk_family": "", "built": main.stat().st_mtime if main else out_dir.stat().st_mtime, "data_mode": "apk", "apk": main.name if main else "",
+               "apk_bytes": main.stat().st_size if main else 0, "files": [f.name for f in apks], "pack_dir": "", "pack_files": 0, "pack_bytes": 0,
+               "signed": None, "backfilled": True}
+    d["built_text"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(d["built"]))
+    if main:
+        m = _APK_NAME_RE.match(main.name)
+        if m:
+            d["package"] = m.group("pkg").lower()
+            d["version"] = m.group("ver") or ""
+            d["numeric_version"] = int(m.group("num") or 0)
+    aj = BUILD_DIR / out_dir.name / "android.json"
+    if not aj.is_file():
+        aj = BUILD_DIR / out_dir.name / ".android.json"
+    if aj.is_file():
+        try:
+            j = json.loads(aj.read_text(encoding="utf-8"))
+            d["name"] = str(j.get("name") or d["name"])
+            d["package"] = str(j.get("package") or d["package"])
+            d["version"] = str(j.get("version") or d["version"])
+            d["numeric_version"] = int(j.get("numeric_version") or d["numeric_version"] or 0)
+        except Exception:
+            pass
+    if (BUILD_DIR / out_dir.name / "game" / EXTDATA_MANIFEST).is_file():
+        d["data_mode"] = "external"
+    for lg in sorted(LOG_DIR.glob(f"build_{out_dir.name}_*.log")) if LOG_DIR.is_dir() else []:
+        m = re.search(r"_(\d+\.\d+\.\d+)\.log$", lg.name)
+        if m:
+            d["sdk_version"] = m.group(1)
+            d["sdk_family"] = family_for(m.group(1))
+    for sub in out_dir.iterdir():
+        if sub.is_dir() and sub.name.endswith("-data") and (sub / "game").is_dir():
+            d["data_mode"], d["pack_dir"] = "external", sub.name
+            d["pack_bytes"] = dir_size(sub)
+            d["pack_files"] = sum(1 for f in sub.rglob("*") if f.is_file())
+            if not d["package"]:
+                d["package"] = sub.name[:-5]
+    if d["package"]:
+        d["phone_data_path"] = phone_data_path(d["package"])
+    return d
+
+
+@dataclass
+class BuildEntry:
+    name: str                 # nom du dossier android\out\<name>
+    out_dir: Path
+    data: dict
+
+    @property
+    def apk(self) -> Path | None:
+        f = self.out_dir / str(self.data.get("apk") or "")
+        return f if self.data.get("apk") and f.is_file() else None
+
+    @property
+    def pack_dir(self) -> Path | None:
+        p = self.out_dir / str(self.data.get("pack_dir") or "")
+        return p if self.data.get("pack_dir") and p.is_dir() else None
+
+    @property
+    def total_bytes(self) -> int:
+        return int(self.data.get("apk_bytes") or 0) + int(self.data.get("pack_bytes") or 0)
+
+
+def list_builds(refresh_sizes: bool = False) -> list[BuildEntry]:
+    """Toutes les constructions sous android\\out\\ (manifeste build.json, sinon déduit et écrit)."""
+    out: list[BuildEntry] = []
+    if not OUT_DIR.is_dir():
+        return out
+    for d in sorted(OUT_DIR.iterdir(), key=lambda x: x.name.lower()):
+        if not d.is_dir():
+            continue
+        mf = d / BUILD_MANIFEST
+        data: dict | None = None
+        if mf.is_file():
+            try:
+                data = json.loads(mf.read_text(encoding="utf-8"))
+            except Exception:
+                data = None
+        if data is None:
+            data = _backfill_manifest(d)
+            if data.get("apk") or data.get("pack_dir"):
+                try:
+                    mf.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                except OSError:
+                    pass
+            else:
+                continue
+        if refresh_sizes:
+            apk = d / str(data.get("apk") or "")
+            data["apk_bytes"] = apk.stat().st_size if data.get("apk") and apk.is_file() else 0
+            pk = d / str(data.get("pack_dir") or "")
+            data["pack_bytes"] = dir_size(pk) if data.get("pack_dir") and pk.is_dir() else 0
+        out.append(BuildEntry(d.name, d, data))
+    out.sort(key=lambda e: float(e.data.get("built") or 0), reverse=True)
+    return out
+
+
+def delete_build(name: str) -> bool:
+    d = OUT_DIR / name
+    if not d.is_dir() or d.resolve().parent != OUT_DIR.resolve():
+        return False
+    shutil.rmtree(d, ignore_errors=True)
+    b = BUILD_DIR / name
+    if b.is_dir():
+        shutil.rmtree(b, ignore_errors=True)
+    return not d.exists()
+
+
+# ----------------------------------------------------------------------------
+# Nettoyage des caches (SDK, JDK, Gradle, unrpyc) et sauvegarde des clés
+# ----------------------------------------------------------------------------
+@dataclass
+class CacheEntry:
+    kind: str          # sdk | jdk | gradle | unrpyc | downloads | build
+    name: str
+    path: Path
+    bytes: int
+    in_use: bool
+
+
+def list_caches(current_sdk: str = "") -> list[CacheEntry]:
+    out: list[CacheEntry] = []
+    if SDK_DIR.is_dir():
+        for d in sorted(SDK_DIR.iterdir(), key=lambda x: vtuple(x.name)):
+            if d.is_dir():
+                out.append(CacheEntry("sdk", d.name, d, dir_size(d), d.name == current_sdk))
+    if JDK_DIR.is_dir():
+        for d in sorted(JDK_DIR.iterdir()):
+            if d.is_dir() and d.name != "downloads":
+                out.append(CacheEntry("jdk", d.name, d, dir_size(d), False))
+    for kind, d in (("gradle", GRADLE_HOME), ("unrpyc", UNRPYC_DIR), ("downloads", ANDROID_ROOT / "downloads"), ("downloads", JDK_DIR / "downloads")):
+        if d.is_dir():
+            out.append(CacheEntry(kind, d.name if kind != "downloads" else str(d.relative_to(ANDROID_ROOT)), d, dir_size(d), False))
+    if BUILD_DIR.is_dir():
+        for d in sorted(BUILD_DIR.iterdir()):
+            if d.is_dir():
+                out.append(CacheEntry("build", d.name, d, dir_size(d), False))
+    return out
+
+
+def delete_cache(path: Path) -> bool:
+    p = Path(path).resolve()
+    root = ANDROID_ROOT.resolve()
+    if root not in p.parents or p in (SDK_DIR.resolve(), JDK_DIR.resolve(), KEYS_DIR.resolve(), OUT_DIR.resolve()):
+        return False
+    if KEYS_DIR.resolve() in p.parents or p == KEYS_DIR.resolve():
+        return False
+    shutil.rmtree(p, ignore_errors=True)
+    return not p.exists()
+
+
+def export_keys(dest: Path) -> list[Path]:
+    dest.mkdir(parents=True, exist_ok=True)
+    done: list[Path] = []
+    for k in ("android.keystore", "bundle.keystore"):
+        src = KEYS_DIR / k
+        if src.is_file():
+            shutil.copy2(src, dest / k)
+            done.append(dest / k)
+    return done

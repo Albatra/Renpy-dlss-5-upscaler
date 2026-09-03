@@ -55,10 +55,17 @@ setup.bat
   1. *Choose the game* (Ren'Py version, scripts, images/videos, estimated size),
   2. *Prepare the environment* once per Ren'Py version (SDK + RAPT from renpy.org, portable Temurin JDK 8 or 21, Android
      SDK through RAPT, signing keys in `android\keys\` — **back them up**),
-  3. *Configure* (name, package id, version, orientation, icon, videos, image size limit),
-  4. *Build* (progress, log, cancel), then *Open folder* or *Install on the phone (adb)*.
+  3. *Configure* (name, package id, version, orientation, icon, **game data inside the APK or separate**, videos, image
+     size limit),
+  4. *Build* (progress, log, cancel), then *Open folder*, *Install on the phone (adb)*, *Copy the data to the phone (adb)*,
+  5. *My APKs*: everything built so far (sizes, SDK, signature) — open, install / uninstall on the phone, delete; clean
+     unused SDKs / JDKs / caches; export the signing keys.
   Works with Ren'Py 7.4+ and 8.x SDKs; Ren'Py 7.0–7.3 games are built with the latest Ren'Py 7 SDK (their original RAPT
-  depends on closed repositories). HD 2x images and DLSS backups are never included. Universal APK ≤ ≈ 2 GB.
+  depends on closed repositories). HD 2x images and DLSS backups are never included.
+  **Big games**: an APK must stay under ≈ 2 GB (4 GB absolute). With *separate data* the APK only holds the engine, the
+  scripts, the interface and the audio (a few dozen MB) and **all images and videos, at full size**, go into a data pack
+  that is copied to `Android/data/<package>/files/game/` on the phone (adb button, or USB from Windows) — the folder the
+  Ren'Py engine reads natively. If the data is missing, the game shows a clear screen with the exact path instead of crashing.
 
 ## Good to know
 

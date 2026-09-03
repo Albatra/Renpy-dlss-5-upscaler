@@ -1723,7 +1723,9 @@ _ANDROID: dict[str, object] = {"analysis": None, "sdk": None, "jdk": None, "buil
 ORIENTATION_LABELS = {t(f"android.orientation.{k}"): k for k in android.ORIENTATIONS}
 STEP_A1_HINT = t("android.step1_hint")
 A_CFG_KEYS = ("name", "icon_name", "package", "version", "numeric", "orientation", "internet", "videos", "budget", "icon", "bundle", "decompile",
-              "skip_rpa", "prefer_rpyc", "estimate")
+              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "estimate")
+DATA_MODE_LABELS = {t("android.data.apk"): "apk", t("android.data.external"): "external"}
+CACHE_KIND_LABELS = {k: t(f"android.cache.kind.{k}") for k in ("sdk", "jdk", "gradle", "unrpyc", "downloads", "build")}
 
 
 def _a_version_from_choice(choice: str) -> str:
@@ -1755,11 +1757,18 @@ def _a_env_md(version: str, manual_sdk: str) -> tuple[str, bool]:
     return t("android.env.missing", items=", ".join(items) or "—") + "  \n" + t("android.env.sizes"), False
 
 
-def _a_estimate_md(a: android.AndroidAnalysis, include_videos: bool, budget_mb: float, skip_rpa: bool) -> str:
+def _a_estimate_md(a: android.AndroidAnalysis, include_videos: bool, budget_mb: float, skip_rpa: bool, data_mode: str = "apk",
+                   ext_audio: bool = False) -> str:
+    if DATA_MODE_LABELS.get(data_mode, data_mode) == "external":
+        apk, pack = a.estimated_split(bool(ext_audio), bool(skip_rpa))
+        msg = t("android.cfg.estimate_split", apk=core.human_size(apk), pack=core.human_size(pack), path=android.phone_data_path("<package>"))
+        if apk > android.APK_SOFT_LIMIT:
+            msg += "  \n" + t("android.cfg.too_big")
+        return msg
     est = a.estimated_apk(bool(include_videos), int(budget_mb or 0) * 1024 * 1024, bool(skip_rpa))
     msg = t("android.cfg.estimate", size=core.human_size(est))
-    if est > 2 * 1024 ** 3:
-        msg += "  \n" + t("android.cfg.too_big")
+    if est > android.APK_SOFT_LIMIT:
+        msg += "  \n" + t("android.cfg.too_big") + " " + t("android.cfg.suggest_external")
     return msg
 
 
@@ -1779,13 +1788,15 @@ def _a_cfg_updates(a: android.AndroidAnalysis, sdk_version: str) -> list:
         gr.update(value=show_decompile, visible=show_decompile),
         gr.update(value=True, label=t("android.cfg.skip_rpa", n=len(a.rpa_extracted), size=core.human_size(a.rpa_extracted_bytes)), visible=bool(a.rpa_extracted)),
         gr.update(value=cfg.prefer_rpyc, visible=a.rpyc_count > 0),
-        _a_estimate_md(a, False, 0, True),
+        {v: k for k, v in DATA_MODE_LABELS.items()}[cfg.data_mode],
+        gr.update(value=cfg.ext_audio, label=t("android.cfg.ext_audio", n=a.audio_count, size=core.human_size(a.audio_bytes)), visible=a.audio_count > 0),
+        _a_estimate_md(a, False, 0, True, cfg.data_mode, cfg.ext_audio),
     ]
 
 
-def android_estimate(include_videos: bool, budget_mb: float, skip_rpa: bool) -> str:
+def android_estimate(include_videos: bool, budget_mb: float, skip_rpa: bool, data_mode: str, ext_audio: bool) -> str:
     a = _ANDROID.get("analysis")
-    return _a_estimate_md(a, include_videos, budget_mb, skip_rpa) if isinstance(a, android.AndroidAnalysis) else ""
+    return _a_estimate_md(a, include_videos, budget_mb, skip_rpa, data_mode, ext_audio) if isinstance(a, android.AndroidAnalysis) else ""
 
 
 def android_analyze(game_root: str):
@@ -1901,10 +1912,13 @@ def android_prepare(game_root: str, sdk_choice: str, manual_sdk: str, org: str, 
 
 def _a_config_from(v: list) -> android.BuildConfig:
     cfg = android.BuildConfig()
-    (name, icon_name, package, version, numeric, orientation_label, internet, videos, budget, icon, bundle, decompile, skip_rpa, prefer_rpyc, _estimate) = v
+    (name, icon_name, package, version, numeric, orientation_label, internet, videos, budget, icon, bundle, decompile, skip_rpa, prefer_rpyc,
+     data_mode, ext_audio, _estimate) = v
     cfg.name, cfg.icon_name, cfg.package, cfg.version = str(name).strip(), str(icon_name).strip(), str(package).strip(), str(version).strip()
     cfg.numeric_version = int(numeric or 0)
     cfg.orientation = ORIENTATION_LABELS.get(orientation_label, "sensorLandscape")
+    cfg.data_mode = DATA_MODE_LABELS.get(data_mode, "apk")
+    cfg.ext_audio = bool(ext_audio)
     cfg.image_budget_mb = int(budget or 0)
     cfg.icon_path = _clean_path(icon)
     cfg.internet, cfg.include_videos, cfg.bundle = bool(internet), bool(videos), bool(bundle)
@@ -1978,9 +1992,15 @@ def android_build(*v):
         md += "  \n" + t("android.staged_note", files=st.files, size=core.human_size(st.bytes), excluded=", ".join(st.excluded) or "—")
         if st.images_skipped:
             md += " " + t("android.images_limited", n=len(st.images_skipped))
+        if st.pack_dir is not None:
+            pkg = cfg.package.strip().lower()
+            md += "  \n" + t("android.pack_note", dir=st.pack_dir, files=st.pack_files, size=core.human_size(st.pack_bytes),
+                             how=t("android.pack_linked") if st.pack_linked else t("android.pack_copied"))
+            md += "  \n" + t("android.pack_howto", path=android.phone_data_path(pkg), obb=f"/sdcard/Android/obb/{pkg}/game", pkg=pkg)
     if "decompile" in stage_info:
         ok, errors = stage_info["decompile"]  # type: ignore[misc]
         md += "  \n" + t("android.decompile_result", ok=ok, errors=len(errors))
+    ver: dict | None = None
     if main:
         try:
             ver = android.verify_apk(sdk, jdk, main)
@@ -1993,7 +2013,213 @@ def android_build(*v):
     others = [f.name for f in r.files if f != main]
     if others:
         md += "  \n" + t("android.other_files", list=", ".join(others))
+    try:
+        android.write_build_manifest(a, cfg, sdk, st if isinstance(st, android.StageResult) else None, r, ver)
+    except Exception as exc:
+        md += "  \n" + t("err.plain", err=exc)
     yield "", _bar_html(1.0, t("progress.done"), done=True), "\n".join(lines[-400:]), gr.update(visible=True), md
+
+
+def android_push():
+    """Copie le pack de données de la dernière construction sur le téléphone (adb push) — générateur : statut."""
+    sdk, r, cfg = _ANDROID.get("sdk"), _ANDROID.get("build"), _ANDROID.get("cfg")
+    if not isinstance(sdk, android.SdkInfo) or not isinstance(r, android.BuildResult) or not isinstance(cfg, android.BuildConfig):
+        yield t("android.need_env")
+        return
+    pack = android.pack_dir_for(cfg)
+    if cfg.data_mode != "external" or not (pack / "game").is_dir():
+        yield t("android.push_no_pack")
+        return
+    if _tools_busy():
+        yield t("tools.busy")
+        return
+    devs = android.adb_devices(sdk)
+    if not devs:
+        yield t("android.no_device")
+        return
+    pkg = cfg.package.strip().lower()
+    thread, log_q, latest = _tools_thread(lambda log, prog, cancel: android.adb_push_data(sdk, pack, pkg, log, cancel))
+    lines: list[str] = []
+    t0 = time.time()
+    while thread.is_alive():
+        _drain(log_q, lines)
+        yield t("android.pushing", elapsed=core.format_eta(time.time() - t0), detail=(lines[-1][:120] if lines else ""))
+        time.sleep(0.7)
+    _drain(log_q, lines)
+    if latest["error"]:
+        yield t("android.push_failed", rc="?", out=str(latest["error"]).splitlines()[0])
+        return
+    rc, out = latest["result"]  # type: ignore[misc]
+    yield t("android.push_done", device=devs[0], path=android.phone_data_path(pkg)) if rc == 0 else t("android.push_failed", rc=rc, out=out[-400:])
+
+
+# ---- Mes APK (gestionnaire) --------------------------------------------------
+_MGR: dict[str, object] = {"builds": [], "caches": []}
+
+
+def _mgr_label(e: android.BuildEntry) -> str:
+    return f"{e.name} — {e.data.get('name') or e.name} ({e.data.get('package') or '?'})"
+
+
+def android_mgr_refresh(refresh_sizes: bool = False):
+    """Sorties : table, dropdown, résumé."""
+    try:
+        builds = android.list_builds(refresh_sizes=refresh_sizes)
+    except Exception as exc:
+        return gr.update(value=[]), gr.update(choices=[], value=None), t("err.plain", err=exc)
+    _MGR["builds"] = builds
+    yes, no = t("android.yes"), t("android.no")
+    rows = []
+    total = 0
+    for e in builds:
+        d = e.data
+        signed = yes if d.get("signed") else (no if d.get("signed") is False else "?")
+        mode = t("android.mgr.mode_external") if d.get("data_mode") == "external" else t("android.mgr.mode_apk")
+        rows.append([str(d.get("name") or e.name), str(d.get("package") or ""), f"{d.get('version') or '?'} ({d.get('numeric_version') or '?'})",
+                     str(d.get("built_text") or ""), str(d.get("sdk_version") or "?"), mode, core.human_size(int(d.get("apk_bytes") or 0)),
+                     core.human_size(int(d.get("pack_bytes") or 0)) if d.get("data_mode") == "external" else "—", signed])
+        total += e.total_bytes
+    labels = [_mgr_label(e) for e in builds]
+    summary = t("android.mgr.summary", n=len(builds), size=core.human_size(total), dir=android.OUT_DIR) if builds else t("android.mgr.empty", dir=android.OUT_DIR)
+    return gr.update(value=rows), gr.update(choices=labels, value=labels[0] if labels else None), summary
+
+
+def _mgr_pick(choice: str) -> android.BuildEntry | None:
+    for e in _MGR.get("builds", []):  # type: ignore[union-attr]
+        if _mgr_label(e) == choice:
+            return e
+    return None
+
+
+def android_mgr_open(choice: str):
+    e = _mgr_pick(choice)
+    if e:
+        android.open_folder(e.out_dir)
+
+
+def android_mgr_delete(choice: str, confirm: bool):
+    e = _mgr_pick(choice)
+    if e is None:
+        return t("android.mgr.pick_one"), gr.update(), gr.update(), gr.update()
+    if not confirm:
+        return t("android.mgr.confirm_first"), gr.update(), gr.update(), gr.update()
+    size = e.total_bytes
+    ok = android.delete_build(e.name)
+    table, dd, summary = android_mgr_refresh()
+    msg = t("android.mgr.deleted", name=e.name, size=core.human_size(size)) if ok else t("android.mgr.delete_failed", name=e.name)
+    return msg, table, dd, summary
+
+
+def android_mgr_install(choice: str):
+    """Installe l'APK choisi (+ pack de données) sur le téléphone — générateur : statut."""
+    e = _mgr_pick(choice)
+    if e is None:
+        yield t("android.mgr.pick_one")
+        return
+    sdk = _ANDROID.get("sdk") if isinstance(_ANDROID.get("sdk"), android.SdkInfo) else android.sdk_with_adb()
+    if sdk is None:
+        yield t("android.mgr.no_adb")
+        return
+    if _tools_busy():
+        yield t("tools.busy")
+        return
+    devs = android.adb_devices(sdk)
+    if not devs:
+        yield t("android.no_device")
+        return
+    apk, pack, pkg = e.apk, e.pack_dir, str(e.data.get("package") or "")
+    if apk is None:
+        yield t("android.mgr.no_apk", name=e.name)
+        return
+
+    def work(log, prog, cancel):
+        rc, out = android.adb_install(sdk, apk, log, cancel)
+        if rc != 0:
+            return rc, out, False
+        if pack is not None and pkg:
+            rc2, out2 = android.adb_push_data(sdk, pack, pkg, log, cancel)
+            return rc2, out + "\n" + out2, True
+        return 0, out, False
+
+    thread, log_q, latest = _tools_thread(work)
+    lines: list[str] = []
+    t0 = time.time()
+    while thread.is_alive():
+        _drain(log_q, lines)
+        yield t("android.pushing", elapsed=core.format_eta(time.time() - t0), detail=(lines[-1][:120] if lines else ""))
+        time.sleep(0.7)
+    _drain(log_q, lines)
+    if latest["error"]:
+        yield t("android.install_failed", rc="?", out=str(latest["error"]).splitlines()[0])
+        return
+    rc, out, pushed = latest["result"]  # type: ignore[misc]
+    if rc != 0:
+        yield t("android.install_failed", rc=rc, out=out[-400:])
+    elif pushed:
+        yield t("android.install_done", device=devs[0]) + " " + t("android.push_done", device=devs[0], path=android.phone_data_path(pkg))
+    else:
+        yield t("android.install_done", device=devs[0])
+
+
+def android_mgr_uninstall(choice: str):
+    e = _mgr_pick(choice)
+    if e is None:
+        return t("android.mgr.pick_one")
+    sdk = _ANDROID.get("sdk") if isinstance(_ANDROID.get("sdk"), android.SdkInfo) else android.sdk_with_adb()
+    if sdk is None:
+        return t("android.mgr.no_adb")
+    if not android.adb_devices(sdk):
+        return t("android.no_device")
+    pkg = str(e.data.get("package") or "")
+    if not pkg:
+        return t("android.mgr.no_package")
+    rc, out = android.adb_uninstall(sdk, pkg, lambda _m: None)
+    return t("android.mgr.uninstalled", pkg=pkg) if rc == 0 else t("android.mgr.uninstall_failed", pkg=pkg, out=out[-300:])
+
+
+def android_cache_refresh():
+    """Sorties : table des caches, dropdown, résumé."""
+    current = str(_ANDROID.get("sdk_version") or "")
+    try:
+        caches = android.list_caches(current)
+    except Exception as exc:
+        return gr.update(value=[]), gr.update(choices=[], value=None), t("err.plain", err=exc)
+    _MGR["caches"] = caches
+    rows = [[CACHE_KIND_LABELS.get(c.kind, c.kind), c.name, core.human_size(c.bytes), t("android.yes") if c.in_use else ""] for c in caches]
+    labels = [f"{CACHE_KIND_LABELS.get(c.kind, c.kind)} — {c.name} ({core.human_size(c.bytes)})" for c in caches]
+    total = sum(c.bytes for c in caches)
+    keys = android.KEYS_DIR / "android.keystore"
+    summary = t("android.cache.summary", size=core.human_size(total), dir=android.ANDROID_ROOT, keys=(t("android.yes") if keys.is_file() else t("android.no")))
+    return gr.update(value=rows), gr.update(choices=labels, value=None), summary
+
+
+def android_cache_delete(choice: str, confirm: bool):
+    caches: list[android.CacheEntry] = _MGR.get("caches", [])  # type: ignore[assignment]
+    labels = [f"{CACHE_KIND_LABELS.get(c.kind, c.kind)} — {c.name} ({core.human_size(c.bytes)})" for c in caches]
+    if choice not in labels:
+        return t("android.mgr.pick_one"), gr.update(), gr.update(), gr.update()
+    if not confirm:
+        return t("android.mgr.confirm_first"), gr.update(), gr.update(), gr.update()
+    c = caches[labels.index(choice)]
+    if c.in_use and c.kind == "sdk":
+        _ANDROID["sdk"], _ANDROID["jdk"] = None, None
+    ok = android.delete_cache(c.path)
+    table, dd, summary = android_cache_refresh()
+    msg = t("android.cache.deleted", name=c.name, size=core.human_size(c.bytes)) if ok else t("android.cache.delete_failed", name=c.name)
+    return msg, table, dd, summary
+
+
+def android_export_keys():
+    if not (android.KEYS_DIR / "android.keystore").is_file():
+        return t("android.keys.none", dir=android.KEYS_DIR)
+    dest = core.pick_folder(t("android.keys.pick"), "")
+    if not dest:
+        return t("android.keys.cancelled")
+    try:
+        done = android.export_keys(Path(dest))
+    except Exception as exc:
+        return t("err.plain", err=exc)
+    return t("android.keys.exported", n=len(done), dir=dest)
 
 
 def android_open_out():
@@ -2498,6 +2724,9 @@ def build_ui() -> gr.Blocks:
                                 with gr.Row():
                                     a_icon = gr.Textbox(label=t("android.cfg.icon"), scale=5, lines=1, max_lines=1)
                                     a_icon_browse = gr.Button(t("common.browse"), scale=1, min_width=110)
+                                a_data_mode = gr.Radio(list(DATA_MODE_LABELS), value=list(DATA_MODE_LABELS)[0], label=t("android.cfg.data_mode"))
+                                gr.Markdown(t("android.cfg.data_hint"), elem_classes=["rhd-hint"])
+                                a_ext_audio = gr.Checkbox(False, label=t("android.cfg.ext_audio", n=0, size="0"), visible=False)
                                 gr.Markdown(t("android.cfg.images"), elem_classes=["rhd-hint"])
                                 with gr.Row():
                                     a_budget = gr.Number(0, precision=0, minimum=0, label=t("android.cfg.budget"), scale=2)
@@ -2519,12 +2748,50 @@ def build_ui() -> gr.Blocks:
                                     with gr.Row():
                                         a_open_out = gr.Button(t("android.open_folder"), min_width=200)
                                         a_install = gr.Button(t("android.install_adb"), min_width=260, visible=android.ANDROID_ADB_ENABLED)
+                                        a_push = gr.Button(t("android.push_adb"), min_width=300, visible=android.ANDROID_ADB_ENABLED)
                                         a_devices = gr.Button(t("android.refresh_devices"), size="sm", min_width=200, visible=android.ANDROID_ADB_ENABLED)
                                     a_device_md = gr.Markdown("")
+                                    a_push_md = gr.Markdown("")
                                 with gr.Row():
                                     a_cancel = gr.Button(t("common.cancel"), variant="stop", size="sm", scale=0, min_width=130)
                                 with gr.Accordion(t("common.details_log"), open=False):
                                     a_log = gr.Textbox(label=t("common.log"), lines=14, max_lines=14, interactive=False, autoscroll=True, elem_id="log")
+                        # ---- 5. Mes APK (gestionnaire)
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(5, t("android.mgr.title")))
+                            gr.Markdown(t("android.mgr.hint"), elem_classes=["rhd-hint"])
+                            m_summary = gr.Markdown("")
+                            m_table = gr.Dataframe(headers=[t("android.mgr.col_game"), t("android.mgr.col_package"), t("android.mgr.col_version"), t("android.mgr.col_date"),
+                                                            t("android.mgr.col_sdk"), t("android.mgr.col_mode"), t("android.mgr.col_apk"), t("android.mgr.col_pack"),
+                                                            t("android.mgr.col_signed")],
+                                                   datatype=["str"] * 9, interactive=False, wrap=True, value=[])
+                            with gr.Row():
+                                m_pick = gr.Dropdown([], label=t("android.mgr.pick"), scale=4)
+                                m_refresh = gr.Button(t("android.mgr.refresh"), size="sm", scale=0, min_width=160)
+                            with gr.Row():
+                                m_open = gr.Button(t("android.open_folder"), min_width=180)
+                                m_install = gr.Button(t("android.mgr.install"), min_width=260, visible=android.ANDROID_ADB_ENABLED)
+                                m_uninstall = gr.Button(t("android.mgr.uninstall"), min_width=220, visible=android.ANDROID_ADB_ENABLED)
+                                m_delete = gr.Button(t("android.mgr.delete"), variant="stop", min_width=180)
+                                m_confirm = gr.Checkbox(False, label=t("android.mgr.confirm"), scale=0, min_width=260)
+                            m_status = gr.Markdown("")
+                            with gr.Accordion(t("android.cache.title"), open=False):
+                                gr.Markdown(t("android.cache.hint"), elem_classes=["rhd-hint"])
+                                c_summary = gr.Markdown("")
+                                c_table = gr.Dataframe(headers=[t("android.cache.col_kind"), t("android.cache.col_name"), t("android.cache.col_size"), t("android.cache.col_in_use")],
+                                                       datatype=["str"] * 4, interactive=False, wrap=True, value=[])
+                                with gr.Row():
+                                    c_pick = gr.Dropdown([], label=t("android.cache.pick"), scale=4)
+                                    c_refresh = gr.Button(t("android.mgr.refresh"), size="sm", scale=0, min_width=160)
+                                with gr.Row():
+                                    c_delete = gr.Button(t("android.cache.delete"), variant="stop", min_width=200)
+                                    c_confirm = gr.Checkbox(False, label=t("android.mgr.confirm"), scale=0, min_width=260)
+                                c_status = gr.Markdown("")
+                            gr.Markdown(t("android.keys_warning"))
+                            with gr.Row():
+                                k_export = gr.Button(t("android.keys.export"), min_width=220)
+                                k_open = gr.Button(t("android.open_keys"), size="sm", scale=0, min_width=220)
+                            k_status = gr.Markdown("")
 
             # ---------------------------------------------------------- Onglet 4
             with gr.Tab(t("tab.help"), id="tab_help"):
@@ -2663,7 +2930,7 @@ def build_ui() -> gr.Blocks:
         t_target.change(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
         # ouverture directe d'un onglet / d'un jeu par l'URL (?tab=tab_tools&sub=sub_rpa&game=…)
         a_cfg_fields = [a_name, a_icon_name, a_package, a_version, a_numeric, a_orientation, a_internet, a_videos, a_budget, a_icon, a_bundle,
-                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_estimate]
+                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_estimate]
         a_analyze_outputs = [a_summary, a_step2, a_step2_hint, a_sdk, a_env_md, a_step3, a_step3_hint, a_step4, a_step4_hint] + a_cfg_fields
         demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root, a_root], queue=False).then(
             rpa_scan, x_root, x_scan_outputs, queue=False).then(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False).then(
@@ -2702,13 +2969,26 @@ def build_ui() -> gr.Blocks:
         a_prep_cancel.click(tools_cancel, None, a_prep_status, queue=False)
         a_open_keys.click(android_open_keys, None, None, queue=False)
         a_icon_browse.click(android_icon_browse, a_icon, a_icon)
-        for comp in (a_videos, a_budget, a_skip_rpa):
-            comp.change(android_estimate, [a_videos, a_budget, a_skip_rpa], a_estimate, queue=False)
-        a_go.click(android_build, a_cfg_fields, [a_status, a_bar, a_log, a_done, a_done_md], concurrency_limit=1, show_progress="minimal")
+        for comp in (a_videos, a_budget, a_skip_rpa, a_data_mode, a_ext_audio):
+            comp.change(android_estimate, [a_videos, a_budget, a_skip_rpa, a_data_mode, a_ext_audio], a_estimate, queue=False)
+        a_go.click(android_build, a_cfg_fields, [a_status, a_bar, a_log, a_done, a_done_md], concurrency_limit=1, show_progress="minimal").then(
+            android_mgr_refresh, None, [m_table, m_pick, m_summary], queue=False)
         a_cancel.click(tools_cancel, None, a_status, queue=False)
         a_open_out.click(android_open_out, None, None, queue=False)
         a_devices.click(android_devices, None, a_device_md)
         a_install.click(android_install, None, a_device_md, concurrency_limit=1)
+        a_push.click(android_push, None, a_push_md, concurrency_limit=1, show_progress="minimal")
+        # ---- Mes APK
+        demo.load(android_mgr_refresh, None, [m_table, m_pick, m_summary], queue=False).then(android_cache_refresh, None, [c_table, c_pick, c_summary], queue=False)
+        m_refresh.click(lambda: android_mgr_refresh(True), None, [m_table, m_pick, m_summary])
+        m_open.click(android_mgr_open, m_pick, None, queue=False)
+        m_delete.click(android_mgr_delete, [m_pick, m_confirm], [m_status, m_table, m_pick, m_summary]).then(lambda: False, None, m_confirm, queue=False)
+        m_install.click(android_mgr_install, m_pick, m_status, concurrency_limit=1, show_progress="minimal")
+        m_uninstall.click(android_mgr_uninstall, m_pick, m_status, concurrency_limit=1)
+        c_refresh.click(android_cache_refresh, None, [c_table, c_pick, c_summary])
+        c_delete.click(android_cache_delete, [c_pick, c_confirm], [c_status, c_table, c_pick, c_summary]).then(lambda: False, None, c_confirm, queue=False)
+        k_export.click(android_export_keys, None, k_status)
+        k_open.click(android_open_keys, None, None, queue=False)
     return demo
 
 
