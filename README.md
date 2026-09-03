@@ -1,6 +1,6 @@
 # RenPyHD
 
-**Make Ren'Py games sharper with NVIDIA DLSS 5.** RenPyHD upscales every image (and, optionally, every video) of a Ren'Py game with DLSS 5 Neural Rendering, without modifying the game. It also extracts `.rpa` archives and helps you translate a game.
+**Make Ren'Py games sharper with NVIDIA DLSS 5.** RenPyHD upscales every image (and, optionally, every video) of a Ren'Py game with DLSS 5 Neural Rendering, without modifying the game. It also extracts `.rpa` archives, helps you translate a game, builds Android APKs and improves the textures of **Unity** games at their original size.
 
 *Version française : [README.fr.md](README.fr.md)*
 
@@ -78,6 +78,16 @@ setup.bat
   scripts, the interface and the audio (a few dozen MB) and **all images and videos, at full size**, go into a data pack
   that is copied to `Android/data/<package>/files/game/` on the phone (adb button, or USB from Windows) — the folder the
   Ren'Py engine reads natively. If the data is missing, the game shows a clear screen with the exact path instead of crashing.
+
+- **Unity** — improves the **textures of a Unity game** (Windows, 32 or 64-bit) with DLSS 5 Neural Rendering **at the
+  original size** (DLAA 1×, *Faces* preset, model K): no render-time injection, the textures are extracted from the asset
+  files with UnityPy, run through DLSS and written back in their **original format and dimensions** (DXT1/DXT5/BC7 via
+  etcpak, ETC/ASTC, RGBA32/RGB24…), so sprites and atlases stay valid and video memory does not grow.
+  1. *Choose the game* (folder with the `.exe` and `<name>_Data`: version, asset files, textures per format / size, sprites),
+  2. *Back up* every asset file into `_renpyhd_backup\` (never overwritten; *Restore the originals*),
+  3. *Settings and preview* (preset, model, minimum size, name / file filters, interface textures skipped, slider + loupe),
+  4. *Improve* (batches, progress, cancel, resume), then *Verify by launching the game* (20 s, window capture, Unity log).
+  Verified on *Man of the House* (Unity 2018.1, x86, 3,865 DXT1/DXT5/RGBA32/RGB24/BC7 textures).
 
 ## Good to know
 

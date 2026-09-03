@@ -19,6 +19,12 @@ Enhancer depuis la page GitHub de son auteur dans `DLSS5/`, et `tools/rpaExtract
 | **Gradio** | Apache-2.0 | `DLSS5/bin/python-3.13.15-embed-amd64/Lib/site-packages` | Web UI framework used by `app/renpy_hd_app.py`. |
 | **Python 3.13** (embeddable) + **Pillow**, **NumPy**, **OpenCV** and other packages bundled by the Visual Enhancer | PSF License / their respective licenses (HPND, BSD, Apache-2.0…) | `DLSS5/bin/python-3.13.15-embed-amd64/` | See each package's `LICENSE` file in `site-packages`. |
 | **unrpa** (via `rpaExtract.exe`, iwanPlays' wrapper) | GPLv3 | `tools/rpaExtract.exe` — **optional, not included** | Alternative `.rpa` extraction engine. RenPyHD's default extractor is its own MIT Python implementation (`renpy_hd_core.Rpa`). See `tools/README.md`. |
+| **UnityPy** (K0lb3) | MIT | `DLSS5/bin/python-3.13.15-embed-amd64/Lib/site-packages` — installed by `setup.bat` with pip, **not redistributed here** | Reads and writes Unity asset files / UnityFS bundles for the *Tools › Unity* module (`renpy_hd_unity.py`). https://github.com/K0lb3/UnityPy |
+| **etcpak** (Python binding by K0lb3 of Bartosz Taudul's etcpak) | MIT (binding) / BSD-3-Clause (etcpak) | idem (pip) | DXT1 / DXT5 / BC4 / BC5 / BC7 / ETC / ETC2 texture encoding when writing textures back. |
+| **texture2ddecoder** (K0lb3) | MIT (decoders under their own permissive licenses) | idem (pip) | Decoding of compressed Unity textures (DXT, BC7, ETC, ASTC, PVRTC, crunch). |
+| **astc-encoder-py** (K0lb3, ARM astc-encoder) | Apache-2.0 | idem (pip) | ASTC texture decoding / encoding. |
+| **lz4**, **attrs**, **archspec**, **fmod_toolkit** / **pyfmodex** (UnityPy dependencies pulled by pip) | BSD-3 / MIT / Apache-2.0 / FMOD (fmod_toolkit ships FMOD libraries under the FMOD license, unused by RenPyHD: no audio is exported) | idem (pip) | Transitive dependencies of UnityPy. |
+| **Unity** | engine of the games being processed (Unity Technologies) | not included | RenPyHD only rewrites textures inside the user's own copy of a game, after a full backup of the touched files. |
 | **Ren'Py** | MIT / LGPL (engine of the games being processed) | not included | `zz_dlss_hd.rpy` and `zz_renpyhd_lang.rpy` are small scripts installed **into the user's game**; the translation tool runs the game's own Ren'Py engine. https://www.renpy.org |
 
 Game assets (images, videos, texts) processed by RenPyHD remain the property of their respective authors.

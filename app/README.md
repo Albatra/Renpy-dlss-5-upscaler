@@ -281,6 +281,45 @@ Limites : APK ≤ ≈ 2 Go (4 Go absolus) — au-delà, données séparées ; pa
 prend la version de l'APK dans `config.version` du jeu (chiffres et points seulement, sinon `1.0`) ; les scripts décompilés par unrpyc
 ne servent qu'à la copie de construction. Drapeaux : `ANDROID_BUNDLE_ENABLED`, `ANDROID_ADB_ENABLED`, `ANDROID_UNRPYC_ENABLED`.
 
+### Unity
+`renpy_hd_unity.py` (moteur, sans Gradio) + onglet *Outils › Unity* de `renpy_hd_app.py`. Dépendances installées par
+`setup.bat` dans le Python embarqué : **UnityPy** (≥ 1.25), **etcpak**, **texture2ddecoder**, **astc-encoder-py**.
+1. **Analyse** — `analyze_unity_game(root)` : dossier `<nom>_Data` (`find_data_dir`), exécutable, `app.info` (société /
+   produit → chemin du journal Unity), conteneurs (`list_containers` : `*.assets`, `level*`, `globalgamemanagers*`, puis tout
+   fichier de `StreamingAssets` et des sous-dossiers de `_Data` dont l'en-tête est `UnityFS` / `UnityWeb` / `UnityRaw` ;
+   les ressources internes du moteur sont ignorées). Chaque conteneur est chargé **en mémoire** (`load_env` : `UnityPy.load`
+   garderait un descripteur ouvert et le fichier ne pourrait plus être remplacé sous Windows) ; pour chaque `Texture2D` :
+   nom, `path_id`, dimensions, `m_TextureFormat`, `m_MipCount`, `m_StreamData` (données dans un `.resS`), nombre de `Sprite`
+   du même conteneur qui la référencent (`m_RD.texture`). Histogrammes formats / tailles, images en vrac hors conteneurs.
+2. **Sélection** — `select_textures(analysis, UnitySettings)` : petit côté ≥ `min_side` (256 par défaut, minimum DLSS 64),
+   ≤ 7680×4320, regex inclure / exclure sur le nom, conteneurs cochés, heuristique d'interface `looks_like_ui` (mots entiers
+   `ui`, `font`, `icon`, `atlas`, `button`, `mask`, `menu`, `overlay`… + sous-chaînes `font`, `icon`, `atlas`, `unity`),
+   formats : `writable_format(fmt)` → `same` (réécrit à l'identique : DXT1/DXT5/BC4/BC5/BC7, ETC*, ASTC*, RGBA32, ARGB32,
+   RGB24, BGRA32, Alpha8, R8), `remapped` (`*Crunched` → format de bloc non compressé) ou `fallback` (RGBA32, seulement si
+   `allow_fallback`). Les raisons d'exclusion sont renvoyées pour l'interface.
+3. **Sauvegarde** — `backup_containers` : copie par blocs de 8 Mo (annulable, reprenable) de chaque conteneur et de ses
+   `sidecar_files` (`.resS`, `.resource`) vers `_renpyhd_backup\<chemin>`, jamais écrasée ; manifeste `unity_backup.json`.
+   `restore_backup` recopie tout et supprime `_renpyhd_unity.json`. `improve_textures` refuse un conteneur non sauvegardé.
+4. **Aperçu** — `preview_textures` : N textures au hasard → PNG dans `app\preview\unity\before` → `core._convert_images_auto`
+   (pipeline DLSS, facteur 1.0, sortie PNG) → `after` ; l'onglet réutilise `_show_pair` / `_crops` (curseur + loupe).
+5. **Amélioration** — `improve_textures` : par conteneur puis par lot (`chunk`, 48) : `extract_texture` (PNG, alpha
+   conservé) → DLSS → `write_back` : image redimensionnée si DLSS a arrondi à une taille paire, puis **en place** dans le
+   `.resS` externe (conteneur `.assets`, sans mipmap, même format, même longueur de données : `image_to_texture2d` puis
+   écriture à `m_StreamData.offset`), sinon `Texture2D.set_image(img, target_format, mipmap_count=m_MipCount)` (UnityPy
+   régénère la chaîne de mipmaps par rééchantillonnage bicubique) + `save_container` (`env.file.save()` ; bundles avec
+   `packer="original"`, repli `lz4`) écrit dans `<fichier>.renpyhd.tmp` puis `os.replace`. Après chaque conteneur, les
+   `path_id` faits sont ajoutés à `_renpyhd_unity.json` (`done[<conteneur>]`) ; un échec de sauvegarde retire les textures
+   « inline » du décompte (le fichier sur disque est intact). Annulation : drapeau vérifié entre les lots, conteneur sauvegardé
+   avec ce qui est fait.
+6. **Vérification** — `verify_launch` : lance l'`.exe` (`-screen-fullscreen 0 -screen-width 1280 -screen-height 720`),
+   attend N s, vérifie que le processus vit, capture la fenêtre par PowerShell (`PrintWindow` avec `PW_RENDERFULLCONTENT`,
+   repli `CopyFromScreen` si l'image est noire), termine le jeu, relit `%USERPROFILE%\AppData\LocalLow\<société>\<produit>\
+   Player.log` ou `output_log.txt` (motifs d'erreur). L'onglet affiche la capture (`app\preview\unity_shots\`).
+
+Limites : formats exotiques (RGBA4444, RGB565, flottants, PVRTC…) seulement via le repli RGBA32 ; les bundles réécrits
+grossissent (données inline en plus du `.resS` interne) ; pas de `Texture2DArray` / `Cubemap` ; les jeux qui vérifient
+l'intégrité de leurs fichiers (hash) ne se lanceront plus — restaurer. Une seule session DLSS à la fois sur la machine.
+
 ## Langue de l'interface
 `app\i18n\<code>.json` : `fr` (référence), `en`, `es`, `de`, `ru`, `pt-BR`. Toute clé absente d'une langue retombe sur le
 français. Ordre de choix : `--lang xx`, puis `ui_lang` dans `renpy_hd_config.json`, puis langue d'affichage de Windows, sinon

@@ -10,7 +10,8 @@ Onglets :
                            → « Améliorer le jeu » (progression, état final, Jouer) ; tout le reste dans l'accordéon « Mode expert »
   2. Comparer / Tester     sous-onglets : Comparer avant/après (curseur + loupe 1:1), Tester une image, Tester une vidéo
   3. Outils                sous-onglets : Extraire les archives (.rpa), Traduire le jeu (extraire → exporter → importer/installer),
-                           Android (APK) (choisir le jeu → préparer l'environnement → configurer → construire)
+                           Android (APK) (choisir le jeu → préparer l'environnement → configurer → construire),
+                           Unity (choisir le jeu → sauvegarder → réglages et aperçu → améliorer les textures à la taille d'origine)
   4. Aide
 
 Code de sortie 75 = « redémarrer » (changement de langue) : le lanceur relance le même processus.
@@ -67,6 +68,7 @@ TOOL_ROOT = Path(ARGS.tool).resolve()
 import renpy_hd_core as core  # noqa: E402
 import renpy_hd_tools as tools  # noqa: E402
 import renpy_hd_android as android  # noqa: E402
+import renpy_hd_unity as unity  # noqa: E402
 
 
 def _choose_language() -> str:
@@ -1538,7 +1540,7 @@ def deeplink(request: gr.Request):
         q = {}
     tab, sub, game = q.get("tab", ""), q.get("sub", ""), _clean_path(q.get("game", ""))
     fill = game if game else gr.update()
-    return [gr.Tabs(selected=tab) if tab else gr.update(), gr.Tabs(selected=sub) if sub else gr.update(), fill, fill, fill, fill]
+    return [gr.Tabs(selected=tab) if tab else gr.update(), gr.Tabs(selected=sub) if sub else gr.update(), fill, fill, fill, fill, fill]
 
 
 def tl_generate(game_root: str, target_label: str, merge: bool):
@@ -2415,6 +2417,380 @@ CSS = """
 """
 
 
+# ----------------------------------------------------------------------------
+# Onglet Outils › Unity : textures d'un jeu Unity améliorées à la taille d'origine (DLAA 1×)
+# ----------------------------------------------------------------------------
+_UNITY: dict[str, object] = {"analysis": None, "selection": None, "settings": None, "preview": [], "preview_index": 0, "summary": None}
+STEP_U1_HINT = t("unity.step1_hint")
+UNITY_PREVIEW_DIR = core.PREVIEW_ROOT / "unity"
+UNITY_SHOTS_DIR = core.PREVIEW_ROOT / "unity_shots"
+U_SKIP_REASONS = ("small", "ui", "format", "huge", "include", "exclude", "container", "limit")
+
+
+def _u_dlss(preset_label: str, model_preset: str) -> core.DlssSettings:
+    p = core.PRESETS.get(PRESET_KEYS.get(PRESET_LABELS.get(preset_label, ""), preset_label)) or core.PRESETS[PRESET_KEYS["faces"]]
+    return core.DlssSettings(factor=1.0, nr_style=str(p["nr_style"]), nr_preset=str(p["nr_preset"]), nr_intensity=float(p["nr_intensity"]),
+                             local_tone=float(p["local_tone"]), local_structure=float(p["local_structure"]),
+                             skin_structure=float(p["skin_structure"]), dlss_model_preset=str(model_preset or "K"), quality=100)
+
+
+def _u_settings(min_side: float, include_re: str, exclude_re: str, containers: list[str], skip_ui: bool, allow_fallback: bool,
+                chunk: float, threads: float) -> unity.UnitySettings:
+    a = _UNITY.get("analysis")
+    all_containers = a.container_labels() if isinstance(a, unity.UnityAnalysis) else []
+    chosen = [c for c in (containers or []) if c in all_containers]
+    return unity.UnitySettings(min_side=int(min_side or unity.DEFAULT_MIN_SIDE), include_re=str(include_re or ""), exclude_re=str(exclude_re or ""),
+                               containers=[] if len(chosen) == len(all_containers) else chosen, skip_ui=bool(skip_ui),
+                               allow_fallback=bool(allow_fallback), chunk=int(chunk or unity.DEFAULT_CHUNK), threads=int(threads or 0))
+
+
+def _u_analysis_md(a: unity.UnityAnalysis) -> str:
+    lines = [t("unity.an.summary", version=a.version or "?", exe=a.exe.name if a.exe else "—", containers=len([c for c in a.containers if not c.error]),
+               bundles=sum(1 for c in a.containers if c.kind == "bundle" and not c.error), textures=len(a.textures),
+               pixels=f"{a.pixels / 1e6:.0f}", big=len(a.big), sprites=a.sprites, elapsed=core.format_eta(a.elapsed))]
+    fmts = []
+    for name, n in a.formats.items():
+        _target, mode = unity.writable_format(name)
+        tag = "" if mode == "same" else (f" → {_target}" if mode == "remapped" else " ⚠️")
+        fmts.append(f"{name} {n}{tag}")
+    lines.append(t("unity.an.formats", list=", ".join(fmts) or "—"))
+    bad = [name for name in a.formats if unity.writable_format(name)[1] == "fallback"]
+    if bad:
+        lines.append(t("unity.an.fallback_warn", formats=", ".join(bad)))
+    lines.append(t("unity.an.dims", list=", ".join(f"{k} : {v}" for k, v in sorted(a.dims.items())), mips=a.mipmapped, streamed=a.streamed))
+    if a.loose_images:
+        lines.append(t("unity.an.loose", n=a.loose_images, dirs=", ".join(a.loose_dirs)))
+    if a.has_backup:
+        lines.append(t("unity.an.backup", n=a.backup_files))
+    if a.done:
+        lines.append(t("unity.an.done", n=a.done))
+    if a.errors:
+        lines.append(t("unity.an.errors", n=len(a.errors), first=a.errors[0]))
+    if not a.textures:
+        lines.append(t("unity.an.none"))
+    return "  \n".join(lines)
+
+
+def _u_selection_md(sel: unity.Selection, a: unity.UnityAnalysis) -> tuple[str, str]:
+    """(résumé de la sélection, liste des textures écartées)."""
+    already = len([x for x in sel.chosen if x.key in unity.done_keys(a.root)])
+    head = t("unity.sel.summary", n=len(sel.chosen), pixels=f"{sel.pixels / 1e6:.0f}", files=len({x.file for x in sel.chosen}), already=already)
+    parts = [t(f"unity.skip.{r}", n=sel.skipped_count(r)) for r in U_SKIP_REASONS if sel.skipped_count(r)]
+    if parts:
+        head += "  \n" + t("unity.sel.skipped", list=" · ".join(parts))
+    ui = sel.skipped.get("ui", [])
+    fmt = sel.skipped.get("format", [])
+    detail = ""
+    if ui:
+        detail += t("unity.sel.ui_list", n=len(ui), names=", ".join(sorted({x.name for x in ui})[:80]) + ("…" if len(ui) > 80 else ""))
+    if fmt:
+        detail += ("  \n" if detail else "") + t("unity.sel.format_list", n=len(fmt), names=", ".join(sorted({f'{x.name} ({x.fmt})' for x in fmt})[:40]))
+    return head, detail
+
+
+def unity_analyze(game_root: str):
+    """Étape 1. Sorties : résumé, corps 2, indice 2, corps 3, indice 3, corps 4, indice 4, conteneurs, résumé sélection, écartées, état sauvegarde."""
+    shown, hidden = gr.update(visible=True), gr.update(visible=False)
+    root = _clean_path(game_root)
+    closed = [hidden, shown, hidden, shown, hidden, shown, gr.update(choices=[], value=[]), "", "", ""]
+    _UNITY.update(analysis=None, selection=None, preview=[], summary=None)
+    if not root:
+        return [STEP_U1_HINT] + closed
+    if not unity.unitypy_version():
+        return [t("unity.err.no_unitypy")] + closed
+    try:
+        a = unity.analyze_unity_game(root)
+    except Exception as exc:
+        return [t("err.analyze_short", err=exc)] + closed
+    _UNITY["analysis"] = a
+    if not a.textures:
+        return [_u_analysis_md(a)] + closed
+    labels = a.container_labels()
+    sel = unity.select_textures(a, unity.UnitySettings())
+    _UNITY["selection"] = sel
+    head, detail = _u_selection_md(sel, a)
+    backed = unity._load_backup_manifest(a.root).get("files", [])
+    needed = unity.backup_files_for(a.root, sorted({x.file for x in sel.chosen}))
+    missing = [f for f in needed if f not in backed or not (a.root / unity.BACKUP_DIR / f).is_file()]
+    bk = t("unity.bk.state_ok", n=len(backed)) if backed and not missing else t("unity.bk.state_missing", n=len(missing), size=core.human_size(
+        sum((a.root / f).stat().st_size for f in missing if (a.root / f).is_file())))
+    ready = bool(backed) and not missing
+    return [_u_analysis_md(a), shown, hidden, shown if ready else hidden, hidden if ready else shown, shown if ready else hidden,
+            hidden if ready else shown, gr.update(choices=labels, value=labels), head, detail, bk]
+
+
+def unity_refresh_selection(min_side, include_re, exclude_re, containers, skip_ui, allow_fallback, chunk, threads):
+    a = _UNITY.get("analysis")
+    if not isinstance(a, unity.UnityAnalysis):
+        return "", ""
+    s = _u_settings(min_side, include_re, exclude_re, containers, skip_ui, allow_fallback, chunk, threads)
+    try:
+        sel = unity.select_textures(a, s)
+    except re.error as exc:
+        return t("unity.sel.bad_regex", err=exc), ""
+    _UNITY["selection"], _UNITY["settings"] = sel, s
+    return _u_selection_md(sel, a)
+
+
+def unity_backup(game_root: str):
+    """Étape 2 (générateur) : sauvegarde des conteneurs concernés. Sorties : statut, barre, journal, corps 3, indice 3, corps 4, indice 4."""
+    shown, hidden, keep = gr.update(visible=True), gr.update(visible=False), gr.update()
+    a = _UNITY.get("analysis")
+    if not isinstance(a, unity.UnityAnalysis):
+        yield [t("unity.need_analysis"), "", ""] + [keep] * 4
+        return
+    if _tools_busy():
+        yield [t("tools.busy"), keep, keep] + [keep] * 4
+        return
+    files = a.container_labels()      # tous les conteneurs à textures : la sauvegarde reste valable quelle que soit la sélection
+    thread, log_q, latest = _tools_thread(lambda log, prog, cancel: unity.backup_containers(a.root, files, log, prog, cancel))
+    lines: list[str] = [t("unity.log.backup_start", n=len(files))]
+    while thread.is_alive():
+        _drain(log_q, lines)
+        p: unity.BackupProgress | None = latest["progress"]  # type: ignore[assignment]
+        frac = p.fraction if p else 0.0
+        txt = t("unity.bk.progress", pct=f"{100 * frac:.0f}", done=p.done, total=p.total, size=core.human_size(p.bytes_done),
+                total_size=core.human_size(p.bytes_total), current=p.current) if p else t("unity.bk.starting")
+        yield [txt, _bar_html(frac, f"{100 * frac:.0f} %"), "\n".join(lines[-300:])] + [keep] * 4
+        time.sleep(0.4)
+    _drain(log_q, lines)
+    if latest["error"]:
+        lines.append("ERREUR : " + str(latest["error"]))
+        yield [t("unity.bk.failed", err=str(latest["error"]).splitlines()[0]), "", "\n".join(lines[-300:])] + [keep] * 4
+        return
+    r: unity.BackupResult = latest["result"]  # type: ignore[assignment]
+    a.has_backup, a.backup_files = True, len(unity._load_backup_manifest(a.root).get("files", []))
+    if r.cancelled:
+        yield [t("unity.bk.cancelled", copied=r.copied), _bar_html(0.0, t("progress.cancelled")), "\n".join(lines[-300:])] + [keep] * 4
+        return
+    msg = t("unity.bk.done", copied=r.copied, skipped=r.skipped, size=core.human_size(r.bytes_copied), elapsed=core.format_eta(r.elapsed),
+            dir=a.root / unity.BACKUP_DIR)
+    if r.errors:
+        msg += "  \n" + t("unity.bk.errors", n=len(r.errors), first=r.errors[0])
+    yield [msg, _bar_html(1.0, t("progress.done"), done=True), "\n".join(lines[-300:]), shown, hidden, shown, hidden]
+
+
+def unity_restore(game_root: str):
+    a = _UNITY.get("analysis")
+    root = a.root if isinstance(a, unity.UnityAnalysis) else Path(_clean_path(game_root))
+    if _tools_busy():
+        return t("tools.busy")
+    try:
+        msgs = unity.restore_backup(root)
+    except Exception as exc:
+        return t("err.plain", err=exc)
+    if isinstance(a, unity.UnityAnalysis):
+        a.done = 0
+    return "  \n".join(msgs)
+
+
+def unity_open_backup():
+    a = _UNITY.get("analysis")
+    if isinstance(a, unity.UnityAnalysis):
+        unity.open_folder(a.root / unity.BACKUP_DIR)
+
+
+def _u_preview_item(key: str | None):
+    items: list[unity.PreviewItem] = _UNITY.get("preview") or []  # type: ignore[assignment]
+    for i, it in enumerate(items):
+        if it.key == key:
+            _UNITY["preview_index"] = i
+            return it
+    return None
+
+
+def _u_show(it: unity.PreviewItem, x: float, y: float, crop: int):
+    pair = core.ComparePair(it.label, core.Source(path=it.before), core.Source(path=it.after), "unity")
+    items: list = _UNITY.get("preview") or []  # type: ignore[assignment]
+    caption = (t("preview.render_time", s=f"{it.seconds:.2f}") if it.seconds else "") + " — " + t("preview.index", i=_UNITY["preview_index"] + 1, n=len(items))
+    return _show_pair(pair, x, y, crop, caption)
+
+
+def unity_preview(count: float, preset_label: str, model_preset: str, min_side, include_re, exclude_re, containers, skip_ui, allow_fallback,
+                  chunk, threads, x: float, y: float, crop: int):
+    """Étape 3 (générateur) : aperçu de N textures au hasard. Sorties : statut, choix, curseur, info, loupe avant, loupe après."""
+    a = _UNITY.get("analysis")
+    empty = [gr.update(choices=[], value=None), None, "", None, None]
+    if not isinstance(a, unity.UnityAnalysis):
+        yield [t("unity.need_analysis")] + empty
+        return
+    if _tools_busy() or _busy():
+        yield [t("tools.busy")] + empty
+        return
+    if _STATE.get("runtime_error"):
+        yield [t("err.runtime", err=_STATE["runtime_error"])] + empty
+        return
+    s = _u_settings(min_side, include_re, exclude_re, containers, skip_ui, allow_fallback, chunk, threads)
+    try:
+        sel = unity.select_textures(a, s)
+    except re.error as exc:
+        yield [t("unity.sel.bad_regex", err=exc)] + empty
+        return
+    _UNITY["selection"], _UNITY["settings"] = sel, s
+    if not sel.chosen:
+        yield [t("unity.sel.empty")] + empty
+        return
+    dlss = _u_dlss(preset_label, model_preset)
+    n = max(1, int(count or 4))
+    state = {"frac": 0.0, "msg": ""}
+
+    def work(log, prog, cancel):
+        def on_prog(f: float, m: str) -> None:
+            state["frac"], state["msg"] = f, m
+        return unity.preview_textures(a, sel, n, dlss, TOOL_ROOT, UNITY_PREVIEW_DIR, log, on_prog, cancel, s.threads)
+
+    thread, log_q, latest = _tools_thread(work)
+    while thread.is_alive():
+        yield [t("unity.pv.progress", pct=f"{100 * state['frac']:.0f}", n=n, msg=state["msg"])] + [gr.update()] * 5
+        time.sleep(0.5)
+    if latest["error"]:
+        yield [t("unity.pv.failed", err=str(latest["error"]).splitlines()[0])] + empty
+        return
+    items: list[unity.PreviewItem] = latest["result"] or []  # type: ignore[assignment]
+    _UNITY["preview"], _UNITY["preview_index"] = items, 0
+    if not items:
+        yield [t("unity.pv.failed", err=t("unity.pv.nothing"))] + empty
+        return
+    slider, info, cb, ca = _u_show(items[0], x, y, crop)
+    yield [t("unity.pv.ready", n=len(items), avg=f"{sum(i.seconds for i in items) / len(items):.2f}"),
+           gr.update(choices=[(i.label, i.key) for i in items], value=items[0].key), slider, info, cb, ca]
+
+
+def unity_preview_show(key: str | None, x: float, y: float, crop: int):
+    it = _u_preview_item(key)
+    if it is None:
+        return None, "", None, None
+    return _u_show(it, x, y, crop)
+
+
+def unity_preview_crop(key: str | None, x: float, y: float, crop: int):
+    it = _u_preview_item(key)
+    if it is None:
+        return None, None
+    try:
+        return _crops(core.open_image(core.Source(path=it.before)).convert("RGB"), core.open_image(core.Source(path=it.after)).convert("RGB"), x, y, crop)
+    except Exception:
+        return None, None
+
+
+def unity_preview_step(key: str | None, delta: int):
+    items: list[unity.PreviewItem] = _UNITY.get("preview") or []  # type: ignore[assignment]
+    if not items:
+        return gr.update()
+    idx = _UNITY["preview_index"]
+    for i, it in enumerate(items):
+        if it.key == key:
+            idx = i
+            break
+    idx = (idx + delta) % len(items)  # type: ignore[operator]
+    _UNITY["preview_index"] = idx
+    return gr.update(value=items[idx].key)
+
+
+def unity_improve(preset_label: str, model_preset: str, min_side, include_re, exclude_re, containers, skip_ui, allow_fallback, chunk, threads):
+    """Étape 4 (générateur) : amélioration + réécriture. Sorties : statut, barre, journal, bloc fin, md fin."""
+    hidden, keep = gr.update(visible=False), gr.update()
+    a = _UNITY.get("analysis")
+    if not isinstance(a, unity.UnityAnalysis):
+        yield t("unity.need_analysis"), "", "", hidden, ""
+        return
+    if _tools_busy() or _busy():
+        yield t("tools.busy"), keep, keep, keep, keep
+        return
+    if _STATE.get("runtime_error"):
+        yield t("err.runtime", err=_STATE["runtime_error"]), "", "", hidden, ""
+        return
+    s = _u_settings(min_side, include_re, exclude_re, containers, skip_ui, allow_fallback, chunk, threads)
+    try:
+        sel = unity.select_textures(a, s)
+    except re.error as exc:
+        yield t("unity.sel.bad_regex", err=exc), "", "", hidden, ""
+        return
+    _UNITY["selection"], _UNITY["settings"] = sel, s
+    if not sel.chosen:
+        yield t("unity.sel.empty"), "", "", hidden, ""
+        return
+    dlss = _u_dlss(preset_label, model_preset)
+    thread, log_q, latest = _tools_thread(lambda log, prog, cancel: unity.improve_textures(a, sel, s, dlss, TOOL_ROOT, log, prog, cancel))
+    lines: list[str] = [t("unity.log.improve_start", n=len(sel.chosen), preset=preset_label, model=dlss.dlss_model_preset)]
+    phases = {"extract": t("unity.phase.extract"), "dlss": t("unity.phase.dlss"), "write": t("unity.phase.write"), "save": t("unity.phase.save")}
+    while thread.is_alive():
+        _drain(log_q, lines)
+        p: unity.ImproveProgress | None = latest["progress"]  # type: ignore[assignment]
+        if p is None:
+            txt, frac = t("progress.preparing"), 0.0
+        else:
+            frac = p.fraction
+            txt = t("unity.progress", pct=f"{100 * frac:.0f}", done=p.done, total=p.total, failed=p.failed, eta=core.format_eta(p.eta),
+                    rate=f"{p.rate:.2f}", phase=phases.get(p.phase, p.phase), file=Path(p.container).name if p.container else "—",
+                    i=p.container_index, n=p.container_count, current=p.current)
+        yield txt, _bar_html(frac, f"{100 * frac:.0f} %"), "\n".join(lines[-400:]), hidden, ""
+        time.sleep(0.5)
+    _drain(log_q, lines)
+    if latest["error"]:
+        lines.append("ERREUR : " + str(latest["error"]))
+        yield t("unity.failed", err=str(latest["error"]).splitlines()[0]), "", "\n".join(lines[-400:]), hidden, ""
+        return
+    r: unity.ImproveSummary = latest["result"]  # type: ignore[assignment]
+    _UNITY["summary"] = r
+    a.done = sum(len(v) for v in unity.load_manifest(a.root).get("done", {}).values())
+    state = t("run.state_cancelled") if r.cancelled else t("run.state_done")
+    md = t("unity.done", state=state, written=r.written, already=r.already, failed=len(r.failed), elapsed=core.format_eta(r.elapsed),
+           rate=f"{r.rate:.2f}", avg=f"{(sum(r.timings) / len(r.timings)) if r.timings else 0:.2f}", inplace=r.inplace, inline=r.inline,
+           containers=r.containers_saved, before=core.human_size(r.bytes_before), after=core.human_size(r.bytes_after))
+    if r.failed:
+        md += "  \n" + t("unity.done_failed", list="  \n".join(f"- {n} : {e}" for n, e in r.failed[:8]))
+    if r.cancelled:
+        md += "  \n" + t("unity.resume_hint")
+    yield ("", _bar_html(1.0 if not r.cancelled else 0.0, t("progress.cancelled") if r.cancelled else t("progress.done"), done=not r.cancelled),
+           "\n".join(lines[-400:]), gr.update(visible=True), md)
+
+
+def unity_verify():
+    """Lance le jeu, attend, capture la fenêtre (générateur). Sorties : état, capture."""
+    a = _UNITY.get("analysis")
+    if not isinstance(a, unity.UnityAnalysis):
+        yield t("unity.need_analysis"), None
+        return
+    if _tools_busy():
+        yield t("tools.busy"), gr.update()
+        return
+    UNITY_SHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UNITY_SHOTS_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}.png"
+    thread, log_q, latest = _tools_thread(lambda log, prog, cancel: unity.verify_launch(a, dest, 20, log, cancel))
+    t0 = time.time()
+    while thread.is_alive():
+        yield t("unity.verify.running", s=f"{time.time() - t0:.0f}"), gr.update()
+        time.sleep(1.0)
+    if latest["error"]:
+        yield t("err.plain", err=str(latest["error"]).splitlines()[0]), None
+        return
+    r: dict = latest["result"]  # type: ignore[assignment]
+    if r.get("error"):
+        yield t("err.plain", err=r["error"]), None
+        return
+    yes, no = t("common.yes"), t("common.no")
+    msg = t("unity.verify.result", alive=yes if r.get("alive") else no, code=r.get("exit_code") if r.get("exit_code") is not None else "—",
+            shot=Path(r["screenshot"]).name if r.get("screenshot") else "—", log=r.get("log") or "—")
+    if r.get("issues"):
+        msg += "  \n" + t("unity.verify.issues", n=len(r["issues"]), list="  \n".join(f"- `{x[:160]}`" for x in r["issues"][:6]))
+    elif r.get("alive"):
+        msg += "  \n" + t("unity.verify.ok")
+    yield msg, (r["screenshot"] if r.get("screenshot") else None)
+
+
+def unity_play():
+    a = _UNITY.get("analysis")
+    if not isinstance(a, unity.UnityAnalysis) or a.exe is None:
+        return t("play.no_exe", root=a.root if isinstance(a, unity.UnityAnalysis) else "")
+    try:
+        import subprocess
+        subprocess.Popen([str(a.exe)], cwd=str(a.exe.parent), close_fds=True)
+        return t("play.started", exe=a.exe.name)
+    except Exception as exc:
+        return t("play.failed", err=exc)
+
+
 def _step_title(n: int, text: str) -> str:
     return f'<div class="rhd-title"><h3><span class="num">{n}</span><span>{text}</span></h3></div>'
 
@@ -2929,9 +3305,98 @@ def build_ui() -> gr.Blocks:
                                 k_open = gr.Button(t("android.open_keys"), size="sm", scale=0, min_width=220)
                             k_status = gr.Markdown("")
 
+                    # ---- Unity
+                    with gr.Tab(t("unity.tab"), id="sub_unity"):
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(1, t("step1.title")))
+                            with gr.Row():
+                                u_root = gr.Textbox(label=t("unity.game_root"), scale=5, lines=1, max_lines=1, placeholder=r"D:\Games\MyUnityGame")
+                                u_browse = gr.Button(t("common.browse"), variant="primary", scale=1, min_width=170)
+                                u_analyze = gr.Button(t("step1.analyze"), scale=1, min_width=190)
+                            u_summary = gr.Markdown(STEP_U1_HINT, elem_classes=["rhd-hint"])
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(2, t("unity.step2_title")))
+                            u_step2_hint = gr.Markdown(t("unity.step2_wait"), elem_classes=["rhd-hint"])
+                            with gr.Column(visible=False) as u_step2:
+                                gr.Markdown(t("unity.step2_hint"), elem_classes=["rhd-hint"])
+                                u_bk_state = gr.Markdown("")
+                                with gr.Row():
+                                    u_backup = gr.Button(t("unity.backup"), variant="primary", elem_id="go-btn", scale=2)
+                                    u_restore = gr.Button(t("unity.restore"), variant="stop", scale=1, min_width=200)
+                                    u_open_backup = gr.Button(t("unity.open_backup"), size="sm", scale=0, min_width=200)
+                                    u_bk_cancel = gr.Button(t("common.cancel"), variant="stop", size="sm", scale=0, min_width=130)
+                                u_bk_bar = gr.HTML("")
+                                u_bk_status = gr.Markdown("")
+                                with gr.Accordion(t("common.details_log"), open=False):
+                                    u_bk_log = gr.Textbox(label=t("common.log"), lines=8, max_lines=8, interactive=False, autoscroll=True, elem_id="log")
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(3, t("unity.step3_title")))
+                            u_step3_hint = gr.Markdown(t("unity.step3_wait"), elem_classes=["rhd-hint"])
+                            with gr.Column(visible=False) as u_step3:
+                                gr.Markdown(t("unity.step3_hint"), elem_classes=["rhd-hint"])
+                                with gr.Row():
+                                    u_preset = gr.Dropdown(list(PRESET_LABELS), value=t("preset.faces"), label=t("step3.preset"), info=t("step3.preset_info"), scale=2)
+                                    u_model = gr.Dropdown(list(core.DLSS_MODEL_PRESETS), value="K", label=t("expert.model"), info=t("unity.model_info"), scale=1)
+                                    u_factor = gr.Dropdown([(t("factor.1"), 1.0)], value=1.0, label=t("step3.factor"), info=t("unity.factor_info"), interactive=False, scale=2)
+                                with gr.Row():
+                                    u_min_side = gr.Number(unity.DEFAULT_MIN_SIDE, precision=0, minimum=64, label=t("unity.min_side"), info=t("unity.min_side_info"), scale=1)
+                                    u_include = gr.Textbox("", label=t("unity.include_re"), info=t("unity.include_info"), lines=1, max_lines=1, scale=2)
+                                    u_exclude = gr.Textbox("", label=t("unity.exclude_re"), info=t("unity.exclude_info"), lines=1, max_lines=1, scale=2)
+                                with gr.Row():
+                                    u_skip_ui = gr.Checkbox(True, label=t("unity.skip_ui"), info=t("unity.skip_ui_info"), scale=2)
+                                    u_fallback = gr.Checkbox(False, label=t("unity.allow_fallback"), info=t("unity.allow_fallback_info"), scale=2)
+                                u_containers = gr.CheckboxGroup([], label=t("unity.containers"), info=t("unity.containers_info"))
+                                with gr.Row():
+                                    u_chunk = gr.Number(unity.DEFAULT_CHUNK, precision=0, minimum=1, maximum=500, label=t("unity.chunk"), info=t("unity.chunk_info"), scale=1)
+                                    u_threads = gr.Number(0, precision=0, minimum=0, maximum=64, label=t("expert.cpu_threads"), info=t("unity.threads_info"), scale=1)
+                                u_sel_md = gr.Markdown("", elem_classes=["rhd-hint"])
+                                with gr.Accordion(t("unity.skipped_accordion"), open=False):
+                                    u_skipped_md = gr.Markdown("")
+                                with gr.Row():
+                                    u_pv_count = gr.Number(4, precision=0, minimum=1, maximum=20, label=t("unity.pv_count"), scale=0, min_width=160)
+                                    u_pv_btn = gr.Button(t("unity.preview"), variant="secondary", scale=1)
+                                    u_pv_cancel = gr.Button(t("common.cancel"), variant="stop", size="sm", scale=0, min_width=130)
+                                u_pv_status = gr.Markdown("")
+                                with gr.Row():
+                                    with gr.Column(scale=3):
+                                        u_pv_slider = gr.ImageSlider(type="pil", label=t("common.slider_label"), max_height=560)
+                                    with gr.Column(scale=1, min_width=250):
+                                        u_pv_pick = gr.Dropdown([], label=t("step4.pick"))
+                                        with gr.Row():
+                                            u_pv_prev = gr.Button(t("common.prev"), min_width=100)
+                                            u_pv_next = gr.Button(t("common.next"), min_width=100)
+                                with gr.Accordion(t("step4.loupe_accordion"), open=False):
+                                    u_pv_info = gr.Markdown("")
+                                    with gr.Row():
+                                        u_pv_x = gr.Slider(0, 100, value=50, step=1, label=t("loupe.x"))
+                                        u_pv_y = gr.Slider(0, 100, value=50, step=1, label=t("loupe.y"))
+                                        u_pv_crop = gr.Slider(64, 512, value=200, step=8, label=t("loupe.zone"))
+                                    with gr.Row():
+                                        u_pv_crop_b = gr.Image(type="pil", label=t("loupe.before"), interactive=False)
+                                        u_pv_crop_a = gr.Image(type="pil", label=t("loupe.after"), interactive=False)
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(4, t("unity.step4_title")))
+                            u_step4_hint = gr.Markdown(t("unity.step4_wait"), elem_classes=["rhd-hint"])
+                            with gr.Column(visible=False) as u_step4:
+                                gr.Markdown(t("unity.step4_hint"), elem_classes=["rhd-hint"])
+                                u_go = gr.Button(t("unity.go"), variant="primary", elem_id="go-btn")
+                                u_bar = gr.HTML("")
+                                u_status = gr.Markdown("")
+                                with gr.Column(visible=False) as u_done:
+                                    u_done_md = gr.Markdown("")
+                                with gr.Row():
+                                    u_verify = gr.Button(t("unity.verify"), min_width=260)
+                                    u_play = gr.Button(t("step5.play"), variant="primary", min_width=160)
+                                    u_restore2 = gr.Button(t("unity.restore"), variant="stop", min_width=200)
+                                    u_cancel = gr.Button(t("common.cancel"), variant="stop", size="sm", scale=0, min_width=130)
+                                u_verify_md = gr.Markdown("")
+                                u_shot = gr.Image(type="filepath", label=t("unity.verify.shot"), interactive=False, height=420)
+                                with gr.Accordion(t("common.details_log"), open=False):
+                                    u_log = gr.Textbox(label=t("common.log"), lines=14, max_lines=14, interactive=False, autoscroll=True, elem_id="log")
+
             # ---------------------------------------------------------- Onglet 4
             with gr.Tab(t("tab.help"), id="tab_help"):
-                gr.Markdown(t("help.md", version=APP_VERSION) + t("help.android.md"))
+                gr.Markdown(t("help.md", version=APP_VERSION) + t("help.android.md") + t("help.unity.md"))
 
         # ------------------------------------------------------------ câblage
         INPUT_KEYS = list(inputs)
@@ -3069,9 +3534,11 @@ def build_ui() -> gr.Blocks:
         a_cfg_fields = [a_name, a_icon_name, a_package, a_version, a_numeric, a_orientation, a_internet, a_videos, a_budget, a_icon, a_bundle,
                         a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_arm64, a_image_mode, a_estimate]
         a_analyze_outputs = [a_summary, a_step2, a_step2_hint, a_sdk, a_env_md, a_step3, a_step3_hint, a_step4, a_step4_hint] + a_cfg_fields
-        demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root, a_root], queue=False).then(
+        u_sel_inputs = [u_min_side, u_include, u_exclude, u_containers, u_skip_ui, u_fallback, u_chunk, u_threads]
+        u_analyze_outputs = [u_summary, u_step2, u_step2_hint, u_step3, u_step3_hint, u_step4, u_step4_hint, u_containers, u_sel_md, u_skipped_md, u_bk_state]
+        demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root, a_root, u_root], queue=False).then(
             rpa_scan, x_root, x_scan_outputs, queue=False).then(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False).then(
-            android_analyze, a_root, a_analyze_outputs)
+            android_analyze, a_root, a_analyze_outputs).then(unity_analyze, u_root, u_analyze_outputs)
         t_gen.click(tl_generate, [t_root, t_target, t_merge], [t_gen_status, t_step2, t_step3, t_step2_hint, t_step3_hint, t_state],
                     concurrency_limit=1, show_progress="minimal")
         t_export.click(tl_export, [t_root, t_target, t_export_base, t_export_chunk, t_export_mb, t_export_idfmt, t_export_scope, t_export_tags, t_export_only],
@@ -3129,6 +3596,31 @@ def build_ui() -> gr.Blocks:
         c_delete.click(android_cache_delete, [c_pick, c_confirm], [c_status, c_table, c_pick, c_summary]).then(lambda: False, None, c_confirm, queue=False)
         k_export.click(android_export_keys, None, k_status)
         k_open.click(android_open_keys, None, None, queue=False)
+
+        # ---- Unity
+        u_browse.click(browse(t("dialog.pick_unity")), u_root, u_root).then(unity_analyze, u_root, u_analyze_outputs)
+        u_analyze.click(unity_analyze, u_root, u_analyze_outputs)
+        u_root.submit(unity_analyze, u_root, u_analyze_outputs)
+        u_backup.click(unity_backup, u_root, [u_bk_status, u_bk_bar, u_bk_log, u_step3, u_step3_hint, u_step4, u_step4_hint],
+                       concurrency_limit=1, show_progress="minimal")
+        u_bk_cancel.click(tools_cancel, None, u_bk_status, queue=False)
+        u_restore.click(unity_restore, u_root, u_bk_status)
+        u_restore2.click(unity_restore, u_root, u_status)
+        u_open_backup.click(unity_open_backup, None, None, queue=False)
+        for comp in u_sel_inputs:
+            comp.change(unity_refresh_selection, u_sel_inputs, [u_sel_md, u_skipped_md], queue=False)
+        u_pv_btn.click(unity_preview, [u_pv_count, u_preset, u_model] + u_sel_inputs + [u_pv_x, u_pv_y, u_pv_crop],
+                       [u_pv_status, u_pv_pick, u_pv_slider, u_pv_info, u_pv_crop_b, u_pv_crop_a], concurrency_limit=1, show_progress="minimal")
+        u_pv_cancel.click(tools_cancel, None, u_pv_status, queue=False)
+        u_pv_pick.change(unity_preview_show, [u_pv_pick, u_pv_x, u_pv_y, u_pv_crop], [u_pv_slider, u_pv_info, u_pv_crop_b, u_pv_crop_a])
+        for s_ in (u_pv_x, u_pv_y, u_pv_crop):
+            s_.release(unity_preview_crop, [u_pv_pick, u_pv_x, u_pv_y, u_pv_crop], [u_pv_crop_b, u_pv_crop_a])
+        u_pv_prev.click(lambda k: unity_preview_step(k, -1), u_pv_pick, u_pv_pick)
+        u_pv_next.click(lambda k: unity_preview_step(k, +1), u_pv_pick, u_pv_pick)
+        u_go.click(unity_improve, [u_preset, u_model] + u_sel_inputs, [u_status, u_bar, u_log, u_done, u_done_md], concurrency_limit=1, show_progress="minimal")
+        u_cancel.click(tools_cancel, None, u_status, queue=False)
+        u_verify.click(unity_verify, None, [u_verify_md, u_shot], concurrency_limit=1, show_progress="minimal")
+        u_play.click(unity_play, None, u_verify_md, queue=False)
     return demo
 
 

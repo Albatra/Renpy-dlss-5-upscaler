@@ -196,6 +196,27 @@ if ($SkipBuild) {
     }
 }
 
+# ----------------------------------------------------------------------------
+# 3. Python packages for the Unity tool (UnityPy + texture codecs), installed into the embedded Python
+# ----------------------------------------------------------------------------
+$Py = Join-Path $Dest "bin\python-3.13.15-embed-amd64\python.exe"
+if (Test-Path $Py) {
+    $env:PYTHONNOUSERSITE = "1"
+    & $Py -c "import UnityPy, etcpak, texture2ddecoder, astc_encoder" 2>$null
+    if ($LASTEXITCODE -eq 0 -and -not $Force) {
+        Say "UnityPy already installed (Unity tool)." "UnityPy déjà installé (outil Unity)."
+    } else {
+        Say "Installing UnityPy and the texture codecs (Unity tool, about 8 MB)..." "Installation d'UnityPy et des codecs de textures (outil Unity, environ 8 Mo)..."
+        & $Py -m pip install --only-binary=:all: --disable-pip-version-check --quiet "UnityPy>=1.25,<2" "etcpak>=0.9.15" "texture2ddecoder>=1.0.6" "astc-encoder-py>=0.1.12"
+        if ($LASTEXITCODE -ne 0) {
+            Say "UnityPy install failed: the Unity tool will be unavailable (run setup.bat again with a network connection)." `
+                "Installation d'UnityPy échouée : l'outil Unity sera indisponible (relancez setup.bat avec une connexion réseau)."
+        } else {
+            Say "UnityPy installed." "UnityPy installé."
+        }
+    }
+}
+
 Write-Host ""
 Write-Host "=============================================================" -ForegroundColor Green
 Write-Host " Done. Start RenPyHD with RenPyHD.exe (or run.bat)." -ForegroundColor Green

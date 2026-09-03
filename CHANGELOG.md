@@ -77,6 +77,33 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   the data pack when relevant) and a probe (`renpyhd_verify_probe.rpy`) that checks the `start` label, the probe images
   and the rendered main menu within a timeout; result stored in `build.json` and shown in the table.
 
+### Tools › Unity
+- New **Unity** module (`renpy_hd_unity.py`, tab *Tools › Unity*): improves the **textures of a Unity game** with DLSS 5
+  Neural Rendering **at the original size** (DLAA 1×, preset *Faces*, DLSS model K by default). No render-time injection
+  (32-bit games cannot load the 64-bit DLSS runtime): every `Texture2D` is extracted from the asset files with **UnityPy**
+  (installed into the embedded Python by `setup.bat`, with etcpak / texture2ddecoder / astc-encoder-py), run through the
+  core's pipelined DLSS path as a PNG (alpha kept), then **written back in its original format and dimensions** — so
+  sprites, atlases and UVs stay valid and the video-memory footprint does not change.
+- Four steps: **choose the game** (folder with the `.exe` and `<name>_Data`; Unity version, `.assets` / `level*` /
+  `globalgamemanagers` / UnityFS bundles of `StreamingAssets`, textures with formats, dimensions, mipmaps, `.resS`
+  streaming and sprite references, loose DLC images pointed to the main tab) → **back up** every asset file and `.resS`
+  into `_renpyhd_backup\` (full copies, never overwritten, resumable; *Restore the originals*) → **settings and preview**
+  (NR preset + DLSS model, factor locked to 1× with the reason shown, minimum short side 256 px, include/exclude name
+  regexes, per-file selection, heuristic exclusion of interface textures — fonts, icons, atlases, buttons, masks… with the
+  skipped list shown — optional RGBA32 fallback for formats that cannot be re-encoded, before/after slider + 1:1 loupe on
+  random textures) → **improve** (batches of 48: extract → DLSS → write back → save the container, progress per texture,
+  cancel, **resume** via `_renpyhd_unity.json`, then *Verify by launching the game* — 20 s, process alive, `PrintWindow` /
+  `BitBlt` capture of the game window shown in the tab, `Player.log` / `output_log.txt` scanned — *Play*, *Restore*).
+- Write-back: DXT1 / DXT5 / BC4 / BC5 / BC7 (etcpak), ETC / ETC2 (etcpak), ASTC (astc-encoder), RGBA32 / ARGB32 / RGB24 /
+  BGRA32 / Alpha8 / R8 (raw) are rewritten identically; *crunched* variants become their uncompressed block format; anything
+  else is skipped unless the RGBA32 fallback is ticked (memory ×4–6, risky on 32-bit games). Textures stored in an external
+  `.resS` with unchanged data size are patched **in place** (the `.assets` file is not re-serialized); the others go through
+  UnityPy `set_image` + `save` (bundles re-packed with their original compression, LZ4 fallback), written to a temp file and
+  swapped atomically. Mipmapped textures get their chain regenerated from the improved level 0.
+- Verified on *Man of the House* v1.0.2c (Unity 2018.1.0f2, x86): 3,865 textures (2,803 DXT1, 914 DXT5, 114 RGBA32,
+  26 RGB24, 8 BC7; 3,627 ≥ 256 px, 3,691 streamed in `.resS`, 16 mipmapped) in 33 containers (20 UnityFS bundles);
+  round trip read → `set_image` → save → reload OK for every format present; UnityPy 1.25.2.
+
 ## [1.0.0] — 2026-09-03
 
 First public release. / Première version publique.

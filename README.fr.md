@@ -4,7 +4,8 @@
 
 **RenPyHD** applique le **DLSS 5 Neural Rendering** de NVIDIA (via le [DLSS 5 Visual Enhancer](https://github.com/Merserk/dlss5-visual-enhancer)
 de Merserk) à toutes les images — et, si vous le souhaitez, aux vidéos — d'un jeu **Ren'Py**, sans toucher au jeu d'origine.
-Il sait aussi **extraire les archives `.rpa`** et vous aide à **traduire un jeu** avec le système de traduction natif de Ren'Py.
+Il sait aussi **extraire les archives `.rpa`**, vous aide à **traduire un jeu** avec le système de traduction natif de Ren'Py,
+construit des **APK Android** et améliore les textures des jeux **Unity** à leur taille d'origine.
 Interface locale (Gradio dans une fenêtre Edge/Chrome), en français, anglais, espagnol, allemand, russe ou portugais du Brésil.
 **100 % local** : rien n'est envoyé nulle part.
 
@@ -31,7 +32,8 @@ Les ressources des jeux restent la propriété de leurs auteurs.
   archives `.rpa` lues directement ; Ren'Py 7.x et 8.x.
 * **Outils** : extraction `.rpa` (moteur Python intégré, reprenable) et **traduction** du jeu (extraction des textes par le
   moteur Ren'Py du jeu, export en fichiers `.txt` numérotés pour le service de traduction de votre choix, import tolérant
-  avec relecture, installation d'un hook de langue avec bascule **Maj+L**).
+  avec relecture, installation d'un hook de langue avec bascule **Maj+L**) ; construction d'**APK Android** ; **Unity** :
+  textures d'un jeu Unity améliorées **à la taille d'origine** (DLAA 1×) et réécrites dans leur format (voir plus bas).
 * **Mode expert** : tous les réglages du moteur (style / preset / intensité NR, local tone & structure, skin structure,
   modèle DLSS J/K/L/M, formats et qualité de sortie, filtres, codec vidéo, CRF, plafond, audio…) et le **traitement en
   pipeline** (une seule session DLSS alimentée en continu par des pools de décodage / encodage — actif par défaut,
@@ -149,6 +151,35 @@ va dans `Android/data/<paquet>/files/game/` — le dossier que le moteur Ren'Py 
 bouton adb, ou par câble USB depuis Windows. Si les données manquent, le jeu affiche un écran clair avec le chemin exact au
 lieu de planter. Le mécanisme d'expansion (OBB) de RAPT n'existe plus que dans Ren'Py 7.3 et dépend de Google Play : il
 n'est pas utilisé.
+
+## Améliorer un jeu Unity (onglet Outils › Unity)
+
+Les jeux **Unity** (Windows, 32 ou 64 bits) n'acceptent pas d'injection DLSS au rendu (un exécutable x86 ne charge pas le
+runtime 64 bits). RenPyHD passe donc par les fichiers : chaque texture (`Texture2D`) est extraite des fichiers d'assets avec
+**UnityPy**, passée dans le DLSS 5 Neural Rendering **à la taille d'origine** (DLAA 1×, préréglage *Visages*, modèle K par
+défaut), puis **réécrite dans le même format et aux mêmes dimensions** (DXT1 / DXT5 / BC4 / BC5 / BC7 via etcpak, ETC / ETC2,
+ASTC, RGBA32 / ARGB32 / RGB24…) : les sprites, atlas et UV restent valables et la mémoire vidéo ne bouge pas — c'est pour
+cela que le facteur est verrouillé à 1×. Quatre étapes :
+
+1. **Choisir le jeu** (dossier contenant l'`.exe` et `<nom>_Data`) : version d'Unity, fichiers `.assets` / `level*` /
+   `globalgamemanagers` / bundles UnityFS de `StreamingAssets`, textures par format et taille, mipmaps, données `.resS`,
+   sprites ; les images en vrac (DLC, fonds d'écran) sont signalées pour l'onglet principal en mode dossier.
+2. **Sauvegarder** : copie intégrale de chaque fichier d'assets (et `.resS`) dans `_renpyhd_backup\` — jamais écrasée,
+   reprenable. **Restaurer les originaux** remet tout en place.
+3. **Réglages et aperçu** : préréglage Neural Rendering et modèle DLSS, côté minimal (256 px), filtres par nom (regex) et
+   par fichier, exclusion heuristique des textures d'interface (polices, icônes, atlas, boutons, masques… liste affichée),
+   repli RGBA32 optionnel pour les formats non ré-encodables (mémoire ×4–6, déconseillé en 32 bits) ; aperçu avant/après de
+   quelques textures au hasard (curseur + loupe 1:1).
+4. **Améliorer** : par lots de 48 — extraction PNG (alpha conservé) → DLSS 1× (pipeline) → réécriture → sauvegarde du
+   fichier ; quand les données ont la même taille elles sont écrites **en place** dans le `.resS` (le `.assets` n'est pas
+   réécrit), sinon UnityPy réécrit le fichier (bundles recompressés comme à l'origine). Progression, journal, annulation,
+   **reprise** (`_renpyhd_unity.json`). Puis **Vérifier en lançant le jeu** (20 s : processus vivant, capture de la fenêtre
+   affichée dans l'onglet, journal `Player.log` / `output_log.txt`), **Jouer**, **Restaurer**.
+
+Vérifié sur *Man of the House* v1.0.2c (Unity 2018.1.0f2, x86) : 3 865 textures (DXT1, DXT5, RGBA32, RGB24, BC7) dans 33
+fichiers dont 20 bundles ; aller-retour lecture → écriture → relecture correct pour chaque format ; jeu relancé après réécriture.
+Limites : formats « crunched » réécrits non compressés (DXT1/DXT5) ; formats exotiques seulement en RGBA32 sur demande ;
+les bundles réécrits grossissent un peu ; l'encodage DXT est avec perte (comme à la création du jeu).
 
 ## FAQ
 
