@@ -8,7 +8,7 @@
 
 ![1:1 zoom: original pixels ×2 versus the DLSS 5 result](docs/screenshots/readme_zoom.jpg)
 
-Image from the Ren'Py game *Melody* (MrDots Games), preset "Faces", factor 2× — full-size files: [original](docs/screenshots/readme_original_720p.jpg) · [DLSS 5](docs/screenshots/readme_dlss5_1440p.jpg). Game assets belong to their authors.
+Image from a Ren'Py game, preset "Faces", factor 2× — full-size files: [original](docs/screenshots/readme_original_720p.jpg) · [DLSS 5](docs/screenshots/readme_dlss5_1440p.jpg). Game assets belong to their authors.
 
 ## Requirements
 

@@ -14,7 +14,7 @@ Interface locale (Gradio dans une fenêtre Edge/Chrome), en français, anglais, 
 
 ![Zoom 1:1 : pixels d'origine agrandis ×2 contre le résultat DLSS 5](docs/screenshots/readme_zoom.jpg)
 
-Image du jeu Ren'Py *Melody* (MrDots Games), traitée avec RenPyHD, préréglage « Visages (K) », facteur 2× — fichiers en taille
+Image d'un jeu Ren'Py, traitée avec RenPyHD, préréglage « Visages (K) », facteur 2× — fichiers en taille
 réelle : [original 1280×720](docs/screenshots/readme_original_720p.jpg) · [DLSS 5 2560×1440](docs/screenshots/readme_dlss5_1440p.jpg).
 Les ressources des jeux restent la propriété de leurs auteurs.
 
