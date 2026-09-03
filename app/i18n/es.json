@@ -747,5 +747,6 @@
   "android.verify.images_missing": "imágenes de prueba del paquete de datos no encontradas.",
   "android.verify.no_menu": "el menú principal no se ha mostrado.",
   "android.verify.no_report": "sin informe de la sonda (el juego falló antes del menú principal).",
-  "android.verify.ok_detail": "Ren'Py {version}, etiqueta start presente, {files} archivos, {images} imagen(es) de prueba cargada(s), menú principal mostrado."
+  "android.verify.ok_detail": "Ren'Py {version}, etiqueta start presente, {files} archivos, {images} imagen(es) de prueba cargada(s), menú principal mostrado.",
+  "single.paste": "… o pegar una imagen (Ctrl+V)"
 }

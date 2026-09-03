@@ -747,5 +747,6 @@
   "android.verify.images_missing": "Testbilder des Datenpakets nicht gefunden.",
   "android.verify.no_menu": "Das Hauptmenü wurde nicht gerendert.",
   "android.verify.no_report": "kein Sondenbericht (das Spiel ist vor dem Hauptmenü abgestürzt).",
-  "android.verify.ok_detail": "Ren'Py {version}, Label start vorhanden, {files} Dateien, {images} Testbild(er) geladen, Hauptmenü gerendert."
+  "android.verify.ok_detail": "Ren'Py {version}, Label start vorhanden, {files} Dateien, {images} Testbild(er) geladen, Hauptmenü gerendert.",
+  "single.paste": "… oder ein Bild einfügen (Strg+V)"
 }

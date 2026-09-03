@@ -747,5 +747,6 @@
   "android.verify.images_missing": "контрольные изображения пакета данных не найдены.",
   "android.verify.no_menu": "главное меню не отрисовано.",
   "android.verify.no_report": "нет отчёта зонда (игра упала до главного меню).",
-  "android.verify.ok_detail": "Ren'Py {version}, метка start есть, файлов: {files}, загружено контрольных изображений: {images}, главное меню отрисовано."
+  "android.verify.ok_detail": "Ren'Py {version}, метка start есть, файлов: {files}, загружено контрольных изображений: {images}, главное меню отрисовано.",
+  "single.paste": "… или вставить изображение (Ctrl+V)"
 }

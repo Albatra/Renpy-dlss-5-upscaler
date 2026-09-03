@@ -747,5 +747,6 @@
   "android.verify.images_missing": "images témoins du pack de données introuvables.",
   "android.verify.no_menu": "le menu principal n'a pas été rendu.",
   "android.verify.no_report": "aucun rapport de la sonde (le jeu a planté avant le menu principal).",
-  "android.verify.ok_detail": "Ren'Py {version}, label start présent, {files} fichiers, {images} image(s) témoin chargée(s), menu principal rendu."
+  "android.verify.ok_detail": "Ren'Py {version}, label start présent, {files} fichiers, {images} image(s) témoin chargée(s), menu principal rendu.",
+  "single.paste": "… ou coller une image (Ctrl+V)"
 }

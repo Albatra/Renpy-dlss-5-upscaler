@@ -747,5 +747,6 @@
   "android.verify.images_missing": "probe images of the data pack not found.",
   "android.verify.no_menu": "the main menu was not rendered.",
   "android.verify.no_report": "no probe report (the game crashed before the main menu).",
-  "android.verify.ok_detail": "Ren'Py {version}, start label present, {files} files, {images} probe image(s) loaded, main menu rendered."
+  "android.verify.ok_detail": "Ren'Py {version}, start label present, {files} files, {images} probe image(s) loaded, main menu rendered.",
+  "single.paste": "… or paste an image (Ctrl+V)"
 }

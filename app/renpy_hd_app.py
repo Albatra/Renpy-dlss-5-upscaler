@@ -973,6 +973,19 @@ def single_from_upload(uploaded):
     return uploaded or gr.update()
 
 
+def single_from_paste(pasted):
+    """Image collée depuis le presse-papiers (Gradio la dépose dans un fichier temporaire) : copiée dans app/preview/single/
+    pour survivre au nettoyage des temporaires, puis utilisée comme chemin source."""
+    import shutil as _sh, time as _tm
+    if not pasted:
+        return gr.update()
+    SINGLE_DIR.mkdir(parents=True, exist_ok=True)
+    src = Path(pasted)
+    dest = SINGLE_DIR / ("colle_" + _tm.strftime("%Y%m%d-%H%M%S") + (src.suffix.lower() or ".png"))
+    _sh.copy2(src, dest)
+    return str(dest)
+
+
 def test_single(progress=gr.Progress(), *args):
     path_value, args = args[0], args[1:]
     v = dict(zip(INPUT_KEYS, args))
@@ -2570,7 +2583,9 @@ def build_ui() -> gr.Blocks:
                             t_path = gr.Textbox(label=t("single.path"), scale=5, lines=1, max_lines=1, placeholder=r"D:\...\image.png")
                             t_browse = gr.Button(t("common.browse"), scale=1, min_width=110)
                             t_run = gr.Button(t("single.run"), variant="primary", scale=1, min_width=140)
-                        t_upload = gr.File(label=t("single.drop"), file_types=["image"], type="filepath", height=90)
+                        with gr.Row():
+                            t_upload = gr.File(label=t("single.drop"), file_types=["image"], type="filepath", height=90, scale=2)
+                            t_paste = gr.Image(label=t("single.paste"), sources=["clipboard"], type="filepath", height=90, scale=1)
                         t_status = gr.Markdown("")
                         t_info = gr.Markdown("")
                         t_slider = gr.ImageSlider(type="pil", label=t("common.slider_label"), max_height=640)
@@ -2888,6 +2903,7 @@ def build_ui() -> gr.Blocks:
         reset_btn.click(reset_flow, None, reset_outputs, queue=False)
         t_browse.click(single_browse, t_path, t_path)
         t_upload.change(single_from_upload, t_upload, t_path, queue=False)
+        t_paste.change(single_from_paste, t_paste, t_path, queue=False)
         t_run.click(test_single, [t_path] + input_list, [t_status, t_slider, t_info, t_crop_b, t_crop_a, t_save], concurrency_limit=1)
         for s_ in (t_x, t_y, t_crop):
             s_.release(single_crop, [t_x, t_y, t_crop], [t_crop_b, t_crop_a])

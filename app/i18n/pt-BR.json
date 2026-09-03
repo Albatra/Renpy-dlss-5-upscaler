@@ -747,5 +747,6 @@
   "android.verify.images_missing": "imagens de teste do pacote de dados não encontradas.",
   "android.verify.no_menu": "o menu principal não foi renderizado.",
   "android.verify.no_report": "nenhum relatório da sonda (o jogo travou antes do menu principal).",
-  "android.verify.ok_detail": "Ren'Py {version}, rótulo start presente, {files} arquivos, {images} imagem(ns) de teste carregada(s), menu principal renderizado."
+  "android.verify.ok_detail": "Ren'Py {version}, rótulo start presente, {files} arquivos, {images} imagem(ns) de teste carregada(s), menu principal renderizado.",
+  "single.paste": "… ou colar uma imagem (Ctrl+V)"
 }
