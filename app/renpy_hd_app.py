@@ -1818,11 +1818,9 @@ def android_analyze(game_root: str):
         lines.append(t("android.an.summary", version=a.version, sdk="—", reason=t(f"android.reason.{reason}")))
         return ["  \n".join(lines)] + closed + blank_cfg
     if a.family == "legacy":
-        versions, _online = android.known_versions()
-        v7 = [v for v in versions if android.vtuple(v)[0] == 7]
-        latest7 = v7[-1] if v7 else sdk_version
-        lines.append(t("android.an.legacy_warn", version=a.version, sdk=latest7))
-        sdk_version, reason = latest7, "same_major"
+        # RAPT 7.0–7.3 patché par RenPyHD (dépendance d'expansion Google Play retirée) : le SDK exact construit et démarre
+        # (vérifié 7.3.5) ; les .rpyc du jeu sont compatibles, contrairement à une recompilation par un SDK 7.4+.
+        lines.append(t("android.an.legacy_warn", version=a.version, sdk=sdk_version))
     lines.append(t("android.an.summary", version=a.version, sdk=sdk_version, reason=t(f"android.reason.{reason}")))
     if not a.online:
         lines.append(t("android.an.offline"))
@@ -2075,9 +2073,11 @@ def android_mgr_refresh(refresh_sizes: bool = False):
         d = e.data
         signed = yes if d.get("signed") else (no if d.get("signed") is False else "?")
         mode = t("android.mgr.mode_external") if d.get("data_mode") == "external" else t("android.mgr.mode_apk")
+        v = d.get("verified") or {}
+        verified = (("✅ " if v.get("ok") else "❌ ") + str(v.get("when_text") or "")) if v else "—"
         rows.append([str(d.get("name") or e.name), str(d.get("package") or ""), f"{d.get('version') or '?'} ({d.get('numeric_version') or '?'})",
                      str(d.get("built_text") or ""), str(d.get("sdk_version") or "?"), mode, core.human_size(int(d.get("apk_bytes") or 0)),
-                     core.human_size(int(d.get("pack_bytes") or 0)) if d.get("data_mode") == "external" else "—", signed])
+                     core.human_size(int(d.get("pack_bytes") or 0)) if d.get("data_mode") == "external" else "—", signed, verified])
         total += e.total_bytes
     labels = [_mgr_label(e) for e in builds]
     summary = t("android.mgr.summary", n=len(builds), size=core.human_size(total), dir=android.OUT_DIR) if builds else t("android.mgr.empty", dir=android.OUT_DIR)
@@ -2159,6 +2159,33 @@ def android_mgr_install(choice: str):
         yield t("android.install_done", device=devs[0]) + " " + t("android.push_done", device=devs[0], path=android.phone_data_path(pkg))
     else:
         yield t("android.install_done", device=devs[0])
+
+
+def android_mgr_verify(choice: str):
+    """« Vérifier » : lance la copie sur PC avec la sonde (générateur : statut, table, dropdown, résumé)."""
+    keep = gr.update()
+    e = _mgr_pick(choice)
+    if e is None:
+        yield t("android.mgr.pick_one"), keep, keep, keep
+        return
+    if _tools_busy():
+        yield t("tools.busy"), keep, keep, keep
+        return
+    thread, log_q, latest = _tools_thread(lambda log, prog, cancel: android.verify_build(e, log))
+    lines: list[str] = []
+    t0 = time.time()
+    while thread.is_alive():
+        _drain(log_q, lines)
+        yield t("android.verify.running", name=e.name, elapsed=core.format_eta(time.time() - t0)), keep, keep, keep
+        time.sleep(0.7)
+    _drain(log_q, lines)
+    table, dd, summary = android_mgr_refresh()
+    if latest["error"]:
+        yield t("android.verify.failed", name=e.name, detail=str(latest["error"]).splitlines()[0]), table, dd, summary
+        return
+    r: dict = latest["result"]  # type: ignore[assignment]
+    msg = t("android.verify.ok", name=e.name, detail=r.get("detail", "")) if r.get("ok") else t("android.verify.failed", name=e.name, detail=r.get("detail", ""))
+    yield msg, table, dd, summary
 
 
 def android_mgr_uninstall(choice: str):
@@ -2763,13 +2790,14 @@ def build_ui() -> gr.Blocks:
                             m_summary = gr.Markdown("")
                             m_table = gr.Dataframe(headers=[t("android.mgr.col_game"), t("android.mgr.col_package"), t("android.mgr.col_version"), t("android.mgr.col_date"),
                                                             t("android.mgr.col_sdk"), t("android.mgr.col_mode"), t("android.mgr.col_apk"), t("android.mgr.col_pack"),
-                                                            t("android.mgr.col_signed")],
-                                                   datatype=["str"] * 9, interactive=False, wrap=True, value=[])
+                                                            t("android.mgr.col_signed"), t("android.mgr.col_verified")],
+                                                   datatype=["str"] * 10, interactive=False, wrap=True, value=[])
                             with gr.Row():
                                 m_pick = gr.Dropdown([], label=t("android.mgr.pick"), scale=4)
                                 m_refresh = gr.Button(t("android.mgr.refresh"), size="sm", scale=0, min_width=160)
                             with gr.Row():
                                 m_open = gr.Button(t("android.open_folder"), min_width=180)
+                                m_verify = gr.Button(t("android.mgr.verify"), min_width=220)
                                 m_install = gr.Button(t("android.mgr.install"), min_width=260, visible=android.ANDROID_ADB_ENABLED)
                                 m_uninstall = gr.Button(t("android.mgr.uninstall"), min_width=220, visible=android.ANDROID_ADB_ENABLED)
                                 m_delete = gr.Button(t("android.mgr.delete"), variant="stop", min_width=180)
@@ -2984,6 +3012,7 @@ def build_ui() -> gr.Blocks:
         m_open.click(android_mgr_open, m_pick, None, queue=False)
         m_delete.click(android_mgr_delete, [m_pick, m_confirm], [m_status, m_table, m_pick, m_summary]).then(lambda: False, None, m_confirm, queue=False)
         m_install.click(android_mgr_install, m_pick, m_status, concurrency_limit=1, show_progress="minimal")
+        m_verify.click(android_mgr_verify, m_pick, [m_status, m_table, m_pick, m_summary], concurrency_limit=1, show_progress="minimal")
         m_uninstall.click(android_mgr_uninstall, m_pick, m_status, concurrency_limit=1)
         c_refresh.click(android_cache_refresh, None, [c_table, c_pick, c_summary])
         c_delete.click(android_cache_delete, [c_pick, c_confirm], [c_status, c_table, c_pick, c_summary]).then(lambda: False, None, c_confirm, queue=False)

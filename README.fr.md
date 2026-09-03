@@ -81,7 +81,9 @@ Puis double-cliquez sur **`RenPyHD.exe`** (ou `run.bat`). Une console s'ouvre, p
    (fichiers, durée, place disque). *Régénérer l'aperçu* tire d'autres images.
 5. **Améliorer le jeu** — un seul bouton, barre de progression, temps restant, journal dans « Détails ». *Annuler*
    arrête proprement, recliquer reprend. À la fin : **Jouer**, *Comparer avant / après*, *Désinstaller le mod*
-   (remet le jeu d'origine). En jeu, **Maj+H** affiche le nombre d'images remplacées.
+   (remet le jeu d'origine). En jeu, **Maj+J** alterne HD → original → écran partagé avant | après (la ligne de séparation
+   suit la souris ; chaque image est coupée à la même fraction de sa propre largeur, pour comparer au pixel près) et
+   **Maj+H** affiche les statistiques (nombre d'images remplacées).
 
 Un jeu déjà amélioré est reconnu : les étapes s'adaptent (Jouer / Comparer / Désinstaller directement).
 
@@ -120,8 +122,11 @@ Android Packaging Tool) — pilotés en ligne de commande sans aucune question. 
 5. **Mes APK** — tout ce qui a été construit (jeu, paquet, version, date, SDK, mode, tailles, signature) : ouvrir,
    installer / désinstaller sur le téléphone, supprimer ; nettoyage des SDK / JDK / caches non utilisés ; export des clés.
 
-Fonctionne avec les SDK Ren'Py 7.4+ et 8.x ; les jeux Ren'Py 7.0–7.3 sont construits avec le dernier Ren'Py 7 (leur RAPT
-d'origine dépend de dépôts fermés). Pas de clé Google Play.
+Fonctionne avec les SDK Ren'Py 7.0 → 8.6 : pour les jeux Ren'Py 7.0–7.3, RenPyHD patche le RAPT d'origine (sa dépendance
+d'expansion Google Play vivait sur le dépôt bintray fermé) et construit avec le SDK exact, donc les scripts compilés du jeu
+tournent tels quels (vérifié par un vrai lancement avec Ren'Py 7.3.5 ; un SDK 7.4+ ne démarre pas ces `.rpyc`). *Vérifier
+(lancement sur PC)* dans *Mes APK* lance n'importe quelle copie de construction avec son SDK et contrôle le label `start`,
+le menu principal et le pack de données. Pas de clé Google Play.
 
 **Gros jeux (sans réduire les images)** : un APK doit rester sous ≈ 2 Go (4 Go absolus, format ZIP). À l'étape 3, *Données
 du jeu : séparées* construit un **APK léger** (moteur, scripts, interface, polices, audio : quelques dizaines de Mo) et un

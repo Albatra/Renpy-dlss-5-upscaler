@@ -644,6 +644,43 @@ def install_adapter(sdk: SdkInfo) -> None:
     sdk.adapter_ok = True
 
 
+LEGACY_PATCH_MARK = "RenPyHD-legacy-patch-1"
+
+
+def patch_legacy_rapt(sdk: SdkInfo, log: Callable[[str], None]) -> bool:
+    r"""RAPT 7.0–7.3 : son prototype Gradle dépend de com.danikula.expansion (dépôt bintray fermé en 2021) uniquement pour
+    l'expansion Google Play (jamais utilisée par RenPyHD). Retire ces dépendances et les classes Downloader*, ajoute
+    mavenCentral(), marque prototype\build.txt et supprime rapt\project pour forcer la recopie. Idempotent ; True si patché."""
+    proto = sdk.rapt / "prototype"
+    root_gradle = proto / "build.gradle"
+    if sdk.family != "legacy" or not root_gradle.is_file():
+        return False
+    bt = proto / "build.txt"
+    stamp = bt.read_text(encoding="utf-8", errors="ignore") if bt.is_file() else ""
+    if LEGACY_PATCH_MARK in stamp:
+        return True
+    s = root_gradle.read_text(encoding="utf-8", errors="ignore")
+    s = re.sub(r"\n[ \t]*maven \{ url 'https://dl\.bintray\.com[^\n]*\}[ \t]*\n", "\n", s)
+    if "mavenCentral()" not in s:
+        s = s.replace("google()", "google()\n        mavenCentral()")
+    root_gradle.write_text(s, encoding="utf-8")
+    lib_gradle = proto / "renpyandroid" / "build.gradle"
+    if lib_gradle.is_file():
+        lines = [ln for ln in lib_gradle.read_text(encoding="utf-8", errors="ignore").splitlines(True) if "com.danikula" not in ln]
+        lib_gradle.write_text("".join(lines), encoding="utf-8")
+    java_dir = proto / "renpyandroid" / "src" / "main" / "java" / "org" / "renpy" / "android"
+    removed = []
+    for fn in ("DownloaderActivity.java", "DownloaderService.java", "DownloaderAlarmReceiver.java"):
+        f = java_dir / fn
+        if f.is_file():
+            f.unlink()
+            removed.append(fn)
+    # build.txt marqué : copy_project() de RAPT (update_always) recopiera le prototype dans rapt\project en conservant local.properties
+    bt.write_text(stamp.rstrip("\n") + "\n" + LEGACY_PATCH_MARK + "\n", encoding="utf-8")
+    log(T("android.log.legacy_patch", removed=", ".join(removed) or "—"))
+    return True
+
+
 def sync_keys(sdk: SdkInfo, log: Callable[[str], None]) -> bool:
     r"""Garde une seule paire de clés dans android\keys et la met là où RAPT la cherche. Renvoie True si les clés existent."""
     KEYS_DIR.mkdir(parents=True, exist_ok=True)
@@ -718,6 +755,7 @@ def prepare_environment(version: str, org: str, with_unrpyc: bool, log: Callable
             if sdk is None:
                 raise RuntimeError(T("android.err.sdk_broken", root=root))
         install_adapter(sdk)
+        patch_legacy_rapt(sdk, log)
         log(T("android.log.sdk_info", version=sdk.version, family=sdk.family, jdk=sdk.jdk_major, tools=sdk.sdk_tools or "?",
               keys=sdk.keys_mode, python=sdk.python.relative_to(sdk.root).as_posix() if sdk.python else "?"))
         # 3. JDK
@@ -1227,6 +1265,7 @@ def build_apk(sdk: SdkInfo, jdk: Path, build_dir: Path, cfg: BuildConfig, log: C
     res.log_file = LOG_DIR / f"build_{build_dir.name}_{sdk.version}.log"
     if res.log_file.is_file():
         res.log_file.unlink()
+    patch_legacy_rapt(sdk, log)
     if sdk.legacy_build:
         args = ["android_build", str(build_dir), "assembleRelease", "--destination", str(out_dir)]
     else:
@@ -1587,6 +1626,103 @@ def list_builds(refresh_sizes: bool = False) -> list[BuildEntry]:
         out.append(BuildEntry(d.name, d, data))
     out.sort(key=lambda e: float(e.data.get("built") or 0), reverse=True)
     return out
+
+
+VERIFY_PROBE_SRC = APP_DIR / "renpyhd_verify_probe.rpy"
+VERIFY_PROBE_NAME = "zz_renpyhd_verify.rpy"
+
+
+def verify_build(entry: BuildEntry, log: Callable[[str], None], timeout: int = 300) -> dict:
+    r"""« Vérifier » : lance la copie de construction sur PC avec le SDK Ren'Py de la construction (RENPYHD_EXTDATA vers le pack si
+    données séparées) et une sonde qui, juste avant le menu principal, vérifie le label start, les images témoins et le rendu du
+    menu, puis quitte. Résultat écrit dans build.json (clé verified)."""
+    name = entry.name
+    build_dir = BUILD_DIR / name
+    res: dict = {"when": time.time(), "when_text": time.strftime("%Y-%m-%d %H:%M"), "ok": False, "detail": "", "report": None}
+
+    def store() -> dict:
+        entry.data["verified"] = res
+        try:
+            (entry.out_dir / BUILD_MANIFEST).write_text(json.dumps(entry.data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        return res
+
+    if not (build_dir / "game").is_dir():
+        res["detail"] = T("android.verify.no_copy", dir=build_dir)
+        return store()
+    version = str(entry.data.get("sdk_version") or "")
+    sdk = inspect_sdk(sdk_root_for(version), version) if version else None
+    if sdk is None or sdk.python is None:
+        res["detail"] = T("android.verify.no_sdk", version=version or "?")
+        return store()
+    probe = build_dir / "game" / VERIFY_PROBE_NAME
+    shutil.copy2(VERIFY_PROBE_SRC, probe)
+    rep = LOG_DIR / f"verify_{name}.json"
+    shot = entry.out_dir / "verify.png"
+    for f in (rep, shot, build_dir / "traceback.txt"):
+        if f.exists():
+            f.unlink()
+    env = launcher_env(None)
+    env.pop("RENPYHD_EXTDATA", None)
+    pack = entry.pack_dir
+    if entry.data.get("data_mode") == "external" and pack is not None:
+        env["RENPYHD_EXTDATA"] = str(pack / "game")
+    env["RENPYHD_PROBE_OUT"] = str(rep)
+    env["RENPYHD_PROBE_SHOT"] = str(shot)
+    cmd = [str(sdk.python), "-EO", "renpy.py", str(build_dir)]
+    log("$ " + " ".join(cmd) + (f"  (RENPYHD_EXTDATA={env['RENPYHD_EXTDATA']})" if "RENPYHD_EXTDATA" in env else ""))
+    t0 = time.time()
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(sdk.root), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                creationflags=NO_WINDOW)
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc.pid)
+            out, _ = proc.communicate()
+            res["detail"] = T("android.verify.timeout", s=timeout)
+        text = out.decode("utf-8", "replace") if out else ""
+        for ln in text.splitlines():
+            if "extdata" in ln or "Error" in ln or "Traceback" in ln:
+                log("  | " + ln.strip()[:200])
+    except Exception as exc:
+        res["detail"] = str(exc)
+    finally:
+        for f in (probe, probe.with_suffix(".rpyc")):
+            if f.is_file():
+                f.unlink()
+    res["elapsed"] = time.time() - t0
+    tb = build_dir / "traceback.txt"
+    if rep.is_file():
+        try:
+            report = json.loads(rep.read_text(encoding="utf-8"))
+        except Exception:
+            report = None
+        res["report"] = report
+        if report:
+            ext = report.get("extdata") or {}
+            images_ok = all(isinstance(x[1], list) for x in report.get("probe_images", [])) if entry.data.get("data_mode") == "external" else True
+            if not report.get("has_start"):
+                res["detail"] = T("android.verify.no_start")
+            elif entry.data.get("data_mode") == "external" and (ext.get("missing") or not images_ok):
+                res["detail"] = T("android.verify.images_missing")
+            elif report.get("stage") != "main_menu_rendered":
+                res["detail"] = res["detail"] or T("android.verify.no_menu")
+            else:
+                res["ok"] = True
+                res["detail"] = T("android.verify.ok_detail", version=report.get("renpy_version", "?"), files=report.get("files", "?"),
+                                  images=len([x for x in report.get("probe_images", []) if isinstance(x[1], list)]))
+    elif not res["detail"]:
+        res["detail"] = T("android.verify.no_report")
+    if tb.is_file() and not res["ok"]:
+        try:
+            last = [ln for ln in tb.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()][-1:]
+            res["detail"] += " — " + (last[0][:200] if last else "traceback.txt")
+        except OSError:
+            pass
+    log(("OK: " if res["ok"] else "KO: ") + res["detail"])
+    return store()
 
 
 def delete_build(name: str) -> bool:

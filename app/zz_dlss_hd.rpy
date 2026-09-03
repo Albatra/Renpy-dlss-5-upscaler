@@ -74,6 +74,98 @@ init -1000 python:
             _dlss_hd_cache[filename] = hd
         return hd
 
+    # ---- avant / après en jeu -------------------------------------------------
+    # Maj+J bascule l'affichage : HD (normal) → original → écran partagé (la ligne suit la souris).
+    _dlss_view_mode = "hd"
+    _dlss_view_modes = ("hd", "sd", "split")
+    _dlss_view_labels = {"hd": "HD (DLSS 5)", "sd": "Original", "split": "Avant | Apres (ligne = souris)"}
+    _dlss_split_frac = 0.5
+    import weakref as _dlss_weakref
+    _dlss_compare_instances = _dlss_weakref.WeakSet()
+    try:
+        _DlssDisplayableBase = renpy.display.core.Displayable
+    except Exception:
+        _DlssDisplayableBase = renpy.display.displayable.Displayable
+
+    class _DlssCompare(_DlssDisplayableBase):
+        """Affiche la version HD, l'originale, ou les deux côte à côte selon _dlss_view_mode."""
+
+        def __init__(self, sd, hd, **properties):
+            super(_DlssCompare, self).__init__(**properties)
+            self.sd = sd
+            self.hd = hd
+            _dlss_compare_instances.add(self)
+
+        def visit(self):
+            return [self.sd, self.hd]
+
+        def predict_one(self):
+            child = self.hd if _dlss_view_mode == "hd" else self.sd
+            renpy.display.predict.displayable(child)
+            if _dlss_view_mode == "split":
+                renpy.display.predict.displayable(self.hd)
+
+        def render(self, width, height, st, at):
+            mode = _dlss_view_mode
+            if mode == "hd":
+                r = renpy.display.render.render(self.hd, width, height, st, at)
+                rv = renpy.display.render.Render(r.width, r.height)
+                rv.blit(r, (0, 0))
+                return rv
+            r_sd = renpy.display.render.render(self.sd, width, height, st, at)
+            if mode == "sd":
+                rv = renpy.display.render.Render(r_sd.width, r_sd.height)
+                rv.blit(r_sd, (0, 0))
+                return rv
+            r_hd = renpy.display.render.render(self.hd, width, height, st, at)
+            _dlss_view_update_mouse()
+            w, h = r_sd.width, r_sd.height
+            x = int(max(0, min(w, round(_dlss_split_frac * w))))
+            rv = renpy.display.render.Render(w, h)
+            if x > 0:
+                rv.blit(r_sd.subsurface((0, 0, x, h)), (0, 0))
+            if x < w:
+                rv.blit(r_hd.subsurface((x, 0, w - x, h)), (x, 0))
+            if 0 < x < w:
+                line = renpy.display.render.render(Solid("#ffffff"), 2, h, st, at)
+                rv.blit(line, (x - 1, 0))
+            renpy.redraw(self, 0.05)
+            return rv
+
+        def get_placement(self):
+            return self.hd.get_placement()
+
+    def _dlss_view_update_mouse():
+        """En mode partagé : la ligne suit la position horizontale de la souris."""
+        global _dlss_split_frac
+        try:
+            mx, my = renpy.get_mouse_pos()
+            _dlss_split_frac = max(0.0, min(1.0, float(mx) / float(config.screen_width)))
+        except Exception:
+            pass
+
+    def _dlss_view_cycle():
+        global _dlss_view_mode
+        i = _dlss_view_modes.index(_dlss_view_mode)
+        _dlss_view_mode = _dlss_view_modes[(i + 1) % len(_dlss_view_modes)]
+        _dlss_view_invalidate()
+        renpy.notify("RenPyHD : " + _dlss_view_labels[_dlss_view_mode])
+        renpy.restart_interaction()
+
+    def _dlss_view_invalidate():
+        # Ren'Py garde les rendus en cache : on force le redessin de chaque image comparée.
+        for inst in list(_dlss_compare_instances):
+            try:
+                renpy.redraw(inst, 0)
+            except Exception:
+                pass
+
+    def _dlss_view_set(mode):
+        global _dlss_view_mode
+        _dlss_view_mode = mode
+        _dlss_view_invalidate()
+        renpy.restart_interaction()
+
     def Image(arg, loose=False, **properties):
         rv = _dlss_orig_Image(arg, loose=loose, **properties)
         if isinstance(rv, _dlss_im.Image):
@@ -81,9 +173,9 @@ init -1000 python:
             if hd:
                 _dlss_hd_stats["hd"] += 1
                 hd_img = _dlss_orig_Image(hd, **properties)
-                if _dlss_hd_zoom == 1.0:
-                    return hd_img
-                return _dlss_motion.Transform(hd_img, zoom=_dlss_hd_zoom)
+                if _dlss_hd_zoom != 1.0:
+                    hd_img = _dlss_motion.Transform(hd_img, zoom=_dlss_hd_zoom)
+                return _DlssCompare(rv, hd_img)
             _dlss_hd_stats["sd"] += 1
         return rv
 
@@ -198,7 +290,7 @@ init -1000 python:
     if config.image_cache_size_mb < _dlss_hd_cache_mb:
         config.image_cache_size_mb = _dlss_hd_cache_mb
 
-# Optionnel : Maj+H en jeu affiche combien d'images et de vidéos ont été remplacées.
+# Maj+H en jeu : nombre d'images et de vidéos remplacées. Maj+J : HD → original → écran partagé (avant | après).
 init python:
     def _dlss_hd_report():
         renpy.notify("DLSS HD : %d HD / %d SD (zoom %.3f) — vidéos %d HD / %d SD" % (
@@ -207,6 +299,7 @@ init python:
 
 screen _dlss_hd_hotkey():
     key "shift_K_h" action Function(_dlss_hd_report)
+    key "shift_K_j" action Function(_dlss_view_cycle)
 
 init python:
     config.overlay_screens.append("_dlss_hd_hotkey")

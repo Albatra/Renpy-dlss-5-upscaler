@@ -41,8 +41,9 @@ RenPyHD\
       nombre de fichiers, la durée et la place disque. « Régénérer l'aperçu » tire d'autres images.
    5. **Améliorer le jeu** : un seul gros bouton. Barre de progression, pourcentage, compteur, temps restant, ligne de
       statut ; journal complet et liste des échecs dans « Détails ». **Annuler** arrête proprement ; cliquer à nouveau
-      reprend là où on s'était arrêté. À la fin : « Jouer » (lance l'exécutable du jeu ; Maj+H en jeu affiche le compteur
-      d'images remplacées), « Comparer avant / après », « Améliorer un autre jeu », « Désinstaller le mod ».
+      reprend là où on s'était arrêté. À la fin : « Jouer » (lance l'exécutable du jeu ; en jeu, Maj+J alterne HD → original →
+      écran partagé avant | après — la ligne suit la souris, chaque image est coupée à la même fraction de sa propre largeur —
+      et Maj+H affiche les statistiques), « Comparer avant / après », « Améliorer un autre jeu », « Désinstaller le mod ».
 
    Un jeu déjà amélioré est reconnu à l'analyse : l'étape 5 s'ouvre directement avec Jouer / Comparer / Désinstaller.
    Tout le reste est dans l'accordéon **Mode expert** en bas de l'onglet (replié par défaut) : mode de traitement, hook,
@@ -212,7 +213,13 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    scriptée : conditions acceptées via `RAPT_NO_TERMS`, réponses « oui », licences via `sdkmanager --licenses`).
    Ren'Py 7.6+/8.1+ : clés par projet (`rapt\buildlib\rapt\keys.py`) ; 7.0–7.5/8.0 : clé dans `rapt\android.keystore`.
    Version absente : correctif suivant de la même série, sinon dernière version de la même majeure. Ren'Py 7.0–7.3 : le RAPT
-   d'origine (Gradle 4.4, `jcenter()` + `dl.bintray.com`, fermé) ne construit plus → dernier Ren'Py 7 (7.8.x) proposé.
+   d'origine (Gradle 4.4) n'échouait que sur `com.danikula.expansion` (expansion Google Play, `dl.bintray.com` fermé) ;
+   `patch_legacy_rapt` retire ces dépendances et les classes `Downloader*` de `rapt\prototype`, ajoute `mavenCentral()` et
+   marque `build.txt` (RAPT recopie le prototype en gardant `local.properties`). Le SDK **exact** est utilisé : un SDK 7.4+
+   ne démarre pas les `.rpyc` d'un jeu 7.3 (« could not find label 'start' »). Vérifié 7.3.5 (A Mother's Love, lancement OK).
+   « Vérifier (lancement sur PC) » (`verify_build`, sonde `renpyhd_verify_probe.rpy` copiée dans la copie sous le nom
+   `zz_renpyhd_verify.rpy`) : lance `renpy.py <copie>` avec le SDK de la construction et `RENPYHD_EXTDATA` vers le pack,
+   contrôle label `start` + images témoins + menu principal rendu (délai 300 s), résultat dans `build.json` (`verified`).
 3. **Configurer** — `.android.json` (clés RAPT : `package`, `name`, `icon_name`, `version`, `numeric_version`, `orientation`,
    `permissions`, `include_pil`, `include_sqlite`, `layout`, `source`, `expansion`, `google_play_key`, `google_play_salt`,
    `store`, `update_icons`, `update_always` + `heap_size`, `update_keystores` pour 7.4+/8.x), icônes

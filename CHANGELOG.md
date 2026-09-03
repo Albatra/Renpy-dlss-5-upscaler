@@ -4,6 +4,11 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
 
 ## [Unreleased] — 1.1.0
 
+### Improve a game
+- In-game before/after (`zz_dlss_hd.rpy`): **Shift+J** cycles HD → original → split screen (the divider follows the mouse;
+  each image is split at the same fraction of its own width), **Shift+H** shows the stats. Documented in Help (six
+  languages) and the READMEs.
+
 ### Tools › Android (APK)
 - New **Android (APK)** module: builds an APK of a Ren'Py game with the official **Ren'Py SDK + RAPT**, driven from their
   command line without any prompt (`renpy_hd_android.py`, `android_matrix.json`, `renpyhd_android_adapter.rpy`).
@@ -35,6 +40,14 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   Gradle cache, downloads, build copies with sizes and a guarded delete) and *Export the keys…* (PowerShell folder picker).
 - Analysis now counts audio files and `gui/` images; the size warning names the real limits (≈ 2 GB practical, 4 GB
   absolute for the ZIP format) and suggests separate data.
+- **Ren'Py 7.0–7.3 games really build and start**: RAPT 7.0–7.3 only failed on `com.danikula.expansion` (Google Play
+  expansion, closed bintray repository). `patch_legacy_rapt` removes those dependencies and the `Downloader*` classes from
+  `rapt\prototype`, adds `mavenCentral()` and marks `build.txt`; the exact SDK is then used (an SDK 7.4+ cannot start
+  7.3 `.rpyc`: "could not find label 'start'"). Verified with A Mother's Love (Ren'Py 7.3.5): universal + per-ABI APKs in
+  121 s, desktop launch OK.
+- **Verify (launch on PC)** in *My APKs*: runs the build copy with the SDK of the build (`RENPYHD_EXTDATA` pointing to
+  the data pack when relevant) and a probe (`renpyhd_verify_probe.rpy`) that checks the `start` label, the probe images
+  and the rendered main menu within a timeout; result stored in `build.json` and shown in the table.
 
 ## [1.0.0] — 2026-09-03
 

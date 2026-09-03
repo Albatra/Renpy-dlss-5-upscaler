@@ -1,7 +1,7 @@
 {
   "_comment": "RenPyHD — compatibilité Ren'Py ↔ RAPT (Ren'Py Android Packaging Tool). Établie le 2026-09-03 à partir des archives réelles renpy-<ver>-rapt.zip (7.3.5, 7.4.11, 7.5.3, 7.6.3, 7.7.3, 7.8.7, 8.0.3, 8.1.2, 8.2.3, 8.3.7, 8.4.1, 8.5.3, 8.6.0). Les champs par famille sont des attentes ; le module relit toujours plat.py / install_sdk.py / android.rpy du SDK téléchargé (sdk_version, jdk_requirement, keys.py, forme de la commande android_build). Expansion native (OBB) vérifiée dans les sources RAPT 7.3.5 / 7.8.7 / 8.1.2 / 8.6.0 : voir 'native_expansion' de chaque famille ; RenPyHD utilise à la place le dossier ANDROID_PUBLIC/game (Android/data/<paquet>/files/game) que tous les moteurs 7.x/8.x placent nativement en tête de config.searchpath (mode « données séparées », hook zz_renpyhd_extdata.rpy).",
   "native_expansion": {
-    "legacy": "complète dans RAPT 7.3.5 : build.py crée bin/main.<code>.<paquet>.obb (ZIP stored des assets), Java DownloaderActivity/DownloaderService (Google Play APK Expansion Library, clé google_play_key obligatoire), ANDROID_EXPANSION lu par renpy/loader.py ; réservée à Google Play (« won't work outside of Google Play ») : non utilisée par RenPyHD",
+    "legacy": "complète dans RAPT 7.3.5 : build.py crée bin/main.<code>.<paquet>.obb (ZIP stored des assets), Java DownloaderActivity/DownloaderService (Google Play APK Expansion Library, clé google_play_key obligatoire), ANDROID_EXPANSION lu par renpy/loader.py ; réservée à Google Play (« won't work outside of Google Play ») : non utilisée par RenPyHD, qui retire cette dépendance du prototype pour que RAPT 7.0–7.3 construise à nouveau",
     "gradle6": "supprimée : configure.py ne garde que expansion = False, build.py n'a plus de code OBB, Java sans DownloaderActivity ; 8.1.2 garde du code mort ANDROID_EXPANSION dans loader.py ; asset packs Play (ANDROID_PACK_FF1..4) seulement via app bundle",
     "modern": "supprimée : idem gradle6 (7.8.7, 8.6.0), plus rien dans loader.py ; asset packs Play (ANDROID_PACK_FF1..4) via app bundle uniquement",
     "android_public": "toutes familles : PythonSDLActivity.java exporte ANDROID_PRIVATE (getFilesDir), ANDROID_PUBLIC (getExternalFilesDir = /sdcard/Android/data/<paquet>/files), ANDROID_OLD_PUBLIC (/sdcard/<paquet>) ; renpy/main.py (7.3.5), android_searchpath (8.1.2), predefined_searchpath (7.8.7, 8.6.0) insèrent ANDROID_PUBLIC/game en tête de config.searchpath s'il existe",
@@ -39,7 +39,7 @@
       "build_command": ["launcher", "android_build", "{project}", "assembleRelease", "--destination", "{dest}"],
       "bundle": false,
       "outputs": "rapt/bin/<package>-<abi>-release.apk (universal + armeabi-v7a + arm64-v8a + x86_64)",
-      "caveat": "Gradle 4.4 / AGP 3.1.3 avec dépôts jcenter() et dl.bintray.com (fermé en 2021) : la construction peut échouer sur la résolution des dépendances ; RenPyHD propose alors le SDK 7.x suivant."
+      "caveat": "Gradle 4.4 / AGP 3.1.3 : seule la dépendance com.danikula.expansion (dl.bintray.com, fermé en 2021, expansion Google Play) ne se résout plus ; jcenter() répond encore (redirection JFrog). RenPyHD patche le prototype (patch_legacy_rapt : dépendances danikula et classes Downloader* retirées, mavenCentral ajouté, build.txt marqué RenPyHD-legacy-patch-1) et construit avec le SDK exact — vérifié 7.3.5 (A Mother's Love : APK universel + 3 ABI, lancement sur PC OK : label start, menu principal, images du pack). Les .rpyc 7.3.5 ne démarrent PAS sous un SDK 7.8.7 (« could not find label 'start' ») : ne jamais remplacer un SDK 7.0–7.3 par un 7.4+ sans recompiler les .rpy."
     },
     "gradle6": {
       "label": "Ren'Py 7.4 – 7.6 et 8.0 – 8.1 (Gradle 6.1.1, AGP 4.0.1)",
@@ -71,7 +71,7 @@
     }
   },
   "versions": [
-    {"min": "7.0.0", "max": "7.3.5", "family": "legacy", "sdk_tools": "4333796", "platform": "android-28", "gradle": "4.4", "agp": "3.1.3", "jdk": "8", "confirmed": "7.3.5 : SDK + RAPT téléchargés, installation Android SDK et clés OK ; construction testée (voir rapport)"},
+    {"min": "7.0.0", "max": "7.3.5", "family": "legacy", "sdk_tools": "4333796", "platform": "android-28", "gradle": "4.4", "agp": "3.1.3", "jdk": "8", "confirmed": "7.3.5 : SDK + RAPT téléchargés, installation Android SDK et clés OK ; construction avec prototype patché (sans expansion bintray) réussie le 2026-09-03 (A Mother's Love, 121 s) et vérifiée par lancement sur PC (label start, menu principal, images du pack) ; 7.0–7.2 : même patch attendu, non testés (utiliser « Vérifier »)"},
     {"min": "7.4.0", "max": "7.4.11", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-30", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "7.4.11 : archive RAPT inspectée (déduit)"},
     {"min": "7.5.0", "max": "7.5.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "7.5.3 : archive RAPT inspectée (déduit)"},
     {"min": "7.6.0", "max": "7.6.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "project", "confirmed": "7.6.3 : archive RAPT inspectée (déduit)"},

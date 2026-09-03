@@ -39,6 +39,8 @@ setup.bat
 3. **Choose what to improve** — images (default) and/or videos, preset and factor. *Continue*.
 4. **Preview** — 10 random images are improved in a test folder. Drag the before/after slider, check the estimate, regenerate if you like.
 5. **Improve the game** — one button, a progress bar, then **Play**. The result lives in `game\hd2x\`; *Uninstall* puts everything back.
+   In game, **Shift+J** cycles HD → original → before | after split screen (the divider follows the mouse; every image is
+   split at the same fraction of its own width, for a pixel-exact comparison) and **Shift+H** shows the stats.
 
 | Steps | Preview | Done |
 |---|---|---|
@@ -60,8 +62,10 @@ setup.bat
   4. *Build* (progress, log, cancel), then *Open folder*, *Install on the phone (adb)*, *Copy the data to the phone (adb)*,
   5. *My APKs*: everything built so far (sizes, SDK, signature) — open, install / uninstall on the phone, delete; clean
      unused SDKs / JDKs / caches; export the signing keys.
-  Works with Ren'Py 7.4+ and 8.x SDKs; Ren'Py 7.0–7.3 games are built with the latest Ren'Py 7 SDK (their original RAPT
-  depends on closed repositories). HD 2x images and DLSS backups are never included.
+  Works with Ren'Py 7.0 → 8.6 SDKs: for Ren'Py 7.0–7.3 games RenPyHD patches the original RAPT (its Google Play expansion
+  dependency lived on the closed bintray repository) and builds with the exact SDK, so the game's compiled scripts run
+  as-is (verified by a real launch with Ren'Py 7.3.5). *Verify (launch on PC)* in *My APKs* starts any build copy with its
+  SDK and checks the `start` label, the main menu and the data pack. HD 2x images and DLSS backups are never included.
   **Big games**: an APK must stay under ≈ 2 GB (4 GB absolute). With *separate data* the APK only holds the engine, the
   scripts, the interface and the audio (a few dozen MB) and **all images and videos, at full size**, go into a data pack
   that is copied to `Android/data/<package>/files/game/` on the phone (adb button, or USB from Windows) — the folder the
