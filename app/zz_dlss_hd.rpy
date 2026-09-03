@@ -56,8 +56,13 @@ init -1000 python:
         hd = _dlss_hd_cache.get(filename)
         if hd is None:
             name = filename.replace("\\", "/")
-            # Ren'Py cherche aussi les images sous images/ (config.search_prefixes) : on fait pareil.
-            bases = [name] if name.lower().startswith("images/") else [name, "images/" + name]
+            # Ren'Py cherche aussi les images sous images/ (config.search_prefixes) : on fait pareil, dans les deux sens.
+            # Les images automatiques (renpy/common/00images.rpy) sont nommées « images/scene1/ae1.webp » alors que
+            # RenPyHD range leurs sorties en « hd2x/scene1/ae1.webp » : on essaie aussi le chemin sans le préfixe.
+            if name.lower().startswith("images/"):
+                bases = [name, name[len("images/"):]]
+            else:
+                bases = [name, "images/" + name]
             candidates = []
             for base in bases:
                 candidates.append(_dlss_hd_dir + base)
