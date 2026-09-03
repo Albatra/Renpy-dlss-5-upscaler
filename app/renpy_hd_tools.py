@@ -404,15 +404,21 @@ def _wait_process_gone(image_name: str, timeout: int, cancel: threading.Event | 
         time.sleep(1.0)
 
 
-HELPER_SRC = '''# RenPyHD : fichier temporaire (supprimé après l'extraction des textes).
-# Étend la commande `translate` de Ren'Py aux scripts compilés (.rpyc, archives .rpa) et écrit un résumé.
+HELPER_SRC = r'''# RenPyHD : fichier temporaire (supprimé après l'extraction des textes).
+# Étend la commande `translate` de Ren'Py aux scripts compilés (.rpyc, archives .rpa) : blocs de dialogue, choix de
+# menus et chaînes des écrans sont pris dans l'AST compilé quand la source .rpy n'existe pas. Écrit aussi un résumé.
 init -999 python:
     import os as _rhd_os
+    import re as _rhd_re
     import renpy.translation.generation as _rhd_gen
     import renpy.translation.scanstrings as _rhd_scan
     _rhd_orig_list = _rhd_gen.translate_list_files
     _rhd_orig_short = _rhd_gen.shorten_filename
-    _rhd_orig_scan = _rhd_scan.scan_strings
+    _rhd_orig_scan_strings = _rhd_scan.scan_strings
+    _rhd_orig_scan = _rhd_scan.scan
+    _rhd_LIT = _rhd_re.compile(r'^\s*(?:_p?\s*\(\s*|__\s*\(\s*)?[uU]?("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')\s*\)?\s*$')
+    _rhd_TEXTY = ("text", "textbutton", "label", "tooltip", "button")
+
     def _rhd_list_files():
         seen = set()
         rv = []
@@ -421,24 +427,102 @@ init -999 python:
                 seen.add(fn)
                 rv.append(fn)
         return rv
+
     def _rhd_shorten(filename):
         fn, common = _rhd_orig_short(filename)
         if not common and not _rhd_os.path.isabs(filename):
-            f = filename.replace("\\\\", "/")
+            f = filename.replace("\\", "/")
+            if f.startswith("renpy/common/"):
+                return f[13:], True
             if f.startswith("game/"):
                 f = f[5:]
             fn = f
         return fn, common
+
     def _rhd_scan_strings(filename):
         if _rhd_os.path.exists(filename):
-            return _rhd_orig_scan(filename)
+            return _rhd_orig_scan_strings(filename)
         rv = []
         for line, s in renpy.game.script.translator.additional_strings[filename]:
             rv.append(_rhd_scan.String(filename, line, s, False))
         return rv
+
+    def _rhd_literal(expr):
+        m = _rhd_LIT.match(expr) if isinstance(expr, str) else None
+        if not m:
+            return None
+        try:
+            v = eval(m.group(1))
+        except Exception:
+            return None
+        return v if isinstance(v, str) and v.strip() else None
+
+    def _rhd_walk_sl(node, filename, out, depth=0):
+        if node is None or depth > 60:
+            return
+        name = getattr(node, "name", None)
+        loc = getattr(node, "location", None)
+        line = loc[1] if isinstance(loc, tuple) and len(loc) > 1 else 0
+        if hasattr(node, "positional") and (name is None or name in _rhd_TEXTY):
+            for expr in (getattr(node, "positional", None) or []):
+                s = _rhd_literal(expr)
+                if s:
+                    out.append((filename, line, s))
+        for k, expr in (getattr(node, "keyword", None) or []):
+            if k in ("text", "tooltip", "alt", "hint"):
+                s = _rhd_literal(expr)
+                if s:
+                    out.append((filename, line, s))
+        for child in (getattr(node, "children", None) or []):
+            _rhd_walk_sl(child, filename, out, depth + 1)
+        for entry in (getattr(node, "entries", None) or []):
+            try:
+                _rhd_walk_sl(entry[1], filename, out, depth + 1)
+            except Exception:
+                pass
+        blk = getattr(node, "block", None)
+        if blk is not None and blk is not node and hasattr(blk, "children"):
+            _rhd_walk_sl(blk, filename, out, depth + 1)
+
+    def _rhd_screen_strings():
+        out = []
+        try:
+            screens = renpy.display.screen.screens
+        except Exception:
+            return out
+        for key, scr in list(screens.items()):
+            fn = getattr(scr, "function", None)
+            loc = getattr(fn, "location", None)
+            filename = loc[0] if isinstance(loc, tuple) and loc else "screens.rpy"
+            try:
+                _rhd_walk_sl(fn, filename, out)
+            except Exception:
+                pass
+        return out
+
+    def _rhd_scan_all(min_priority=0, max_priority=299, common_only=False):
+        rv = _rhd_orig_scan(min_priority, max_priority, common_only)
+        seen = set([s.text for s in rv])
+        extra = []
+        t = renpy.game.script.translator
+        for fn in sorted(t.additional_strings.keys()):
+            if _rhd_os.path.exists(fn):
+                continue
+            for line, s in t.additional_strings[fn]:
+                if s and s not in seen:
+                    seen.add(s)
+                    extra.append(_rhd_scan.String(fn, line, s, False))
+        for fn, line, s in _rhd_screen_strings():
+            if s not in seen:
+                seen.add(s)
+                extra.append(_rhd_scan.String(fn, line, s, False))
+        extra = [s for s in extra if s.priority >= min_priority and s.priority <= max_priority and (s.common or not common_only)]
+        return rv + extra
+
     _rhd_gen.translate_list_files = _rhd_list_files
     _rhd_gen.shorten_filename = _rhd_scan.shorten_filename = _rhd_shorten
     _rhd_scan.scan_strings = _rhd_scan_strings
+    _rhd_scan.scan = _rhd_scan_all
 
 init 999 python:
     import json as _rhd_json
@@ -447,6 +531,8 @@ init 999 python:
         _langs = sorted(set([str(k[1]) for k in _t.language_translates.keys() if k[1] is not None]))
         _info = {"languages": _langs, "files": len(_t.file_translates),
                  "blocks": sum([len(v) for v in _t.file_translates.values()]),
+                 "menu_strings": sum([len(v) for v in _t.additional_strings.values()]),
+                 "screen_strings": len(_rhd_screen_strings()),
                  "version": renpy.version(), "gamedir": renpy.config.gamedir}
         _data = _rhd_json.dumps(_info, ensure_ascii=True)
         if not isinstance(_data, bytes):
@@ -464,7 +550,7 @@ init 1600 python:
     _t = renpy.game.script.translator
     _blocks = len([1 for k in _t.language_translates.keys() if k[1] == _lang])
     _samples = {}
-    for _s in ("Back", "Skip", "Save", "Load", "Quit", "Preferences", "Yes", "No", "Start"):
+    for _s in ("Back", "Skip", "Save", "Load", "Quit", "Preferences", "Yes", "No", "Start") + %(samples)s:
         try:
             _samples[_s] = renpy.translation.translate_string(_s, _lang)
         except Exception as _e:
@@ -1543,8 +1629,8 @@ def is_story_text(seg: "Segment") -> bool:
         return False
     t = re.sub(r"\{[^{}]*\}", "", seg.source).strip()
     low = t.lower()
-    if not t:
-        return False
+    if not t or not re.sub(INTERP_RE, "", t).strip(" :;.,!?-"):
+        return False               # vide, ou seulement des interpolations ([he.result!q])
     if ("/" in t or "\\" in t) and low.endswith(ASSET_EXTS):
         return False
     if low in UI_LABELS or re.fullmatch(r"(?:part|chapter|chapitre|episode|day|jour)\s*\d+[a-z]?", low):
@@ -1846,7 +1932,8 @@ def install_language_hook(game_root: str, lang: str) -> Path:
     return target
 
 
-def check_translation(game_root: str, lang: str, log: Callable[[str], None], cancel: threading.Event) -> dict:
+def check_translation(game_root: str, lang: str, log: Callable[[str], None], cancel: threading.Event,
+                      samples: list[str] | None = None) -> dict:
     """Lance le jeu avec un script de vérification (init 1600 : langue, blocs, chaînes traduites, puis sortie)."""
     game = core.find_game_dir(game_root)
     root = game.parent
@@ -1857,7 +1944,7 @@ def check_translation(game_root: str, lang: str, log: Callable[[str], None], can
     with_suppress_unlink(out_file)
     tb = root / "traceback.txt"
     tb_before = tb.stat().st_mtime if tb.is_file() else 0.0
-    (game / TL_CHECK).write_text(CHECK_SRC % {"lang": lang}, encoding="utf-8")
+    (game / TL_CHECK).write_text(CHECK_SRC % {"lang": lang, "samples": repr(tuple(str(x) for x in (samples or [])))}, encoding="utf-8")
     try:
         rc, out = run_renpy(rt, [], log, timeout=600, cancel=cancel)
     finally:
