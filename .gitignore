@@ -11,6 +11,9 @@ app/renpy_hd_config.json
 app/video_probe_cache.json
 *.log
 
+# Android (APK) module cache: Ren'Py SDKs, RAPT, JDK, Android SDK, signing keys, build copies, APKs
+android/
+
 # Optional third-party extractor (GPL, not redistributed)
 tools/rpaExtract.exe
 

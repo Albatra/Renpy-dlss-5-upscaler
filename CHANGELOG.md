@@ -2,6 +2,21 @@
 
 All notable changes to RenPyHD are documented here. / Toutes les évolutions notables de RenPyHD sont listées ici.
 
+## [Unreleased] — 1.1.0
+
+### Tools › Android (APK)
+- New **Android (APK)** module: builds an APK of a Ren'Py game with the official **Ren'Py SDK + RAPT**, driven from their
+  command line without any prompt (`renpy_hd_android.py`, `android_matrix.json`, `renpyhd_android_adapter.rpy`).
+- Four steps: choose the game (Ren'Py version, `.rpy`/`.rpyc` coverage, HD 2x / backups / hook always excluded, images,
+  videos, already extracted `.rpa`, estimated size) → prepare the environment once per version (SDK + RAPT from renpy.org,
+  portable Temurin JDK 8 or 21, Android SDK through RAPT, signing keys in `android\keys\`, optional unrpyc) → configure
+  (`.android.json`, icons, videos, image size limit, `.rpyc` as-is, app bundle) → build (progress, log, cancel, `apksigner`
+  check, open folder, adb install).
+- Compatibility table (Ren'Py 7.0 → 8.6): JDK 8 for Ren'Py ≤ 7.6 / 8.0–8.1, JDK 21 for Ren'Py ≥ 7.7 / 8.2; Ren'Py 7.0–7.3
+  games are built with the latest Ren'Py 7 SDK (their RAPT depends on the closed jcenter/bintray repositories); versions
+  missing from renpy.org fall back to the next patch of the same series, then the latest of the same major.
+- Strings in the six interface languages, Help tab section, README sections.
+
 ## [1.0.0] — 2026-09-03
 
 First public release. / Première version publique.

@@ -195,6 +195,41 @@ archives ne produit rien ; les traducteurs qui fusionnent ou renumérotent des l
 (Des moteurs automatiques — modèles Argos via CTranslate2, Google via deep-translator — restent dans `renpy_hd_tools.py`
 derrière `AUTO_ENGINES_ENABLED = False`, sans interface.)
 
+### Android (APK)
+Construit un APK du jeu avec les outils officiels de Ren'Py — le **SDK Ren'Py** et **RAPT** (Ren'Py Android Packaging Tool) —
+pilotés par leur propre ligne de commande, sans aucune question (module `renpy_hd_android.py`, table `android_matrix.json`,
+adaptateur `renpyhd_android_adapter.rpy` copié dans `launcher\game\` du SDK sous le nom `zz_renpyhd_android.rpy`).
+Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (SDK + `rapt\`, Android SDK dans `rapt\Sdk`),
+`jdk\` (Temurin portable), `keys\` (`android.keystore`, `bundle.keystore` — **à sauvegarder**), `unrpyc\`, `build\<jeu>\`
+(copie de construction), `out\<jeu>\` (APK), `gradle\` (cache), `logs\`.
+
+1. **Choisir le jeu** — version de Ren'Py, `.rpy` présents pour chaque `.rpyc`, `hd2x*` / `_dlss_backup` / hook (toujours
+   exclus), images, vidéos, archives `.rpa` déjà extraites, taille estimée.
+2. **Préparer l'environnement** — une fois par version : `renpy-<ver>-sdk.zip` + `renpy-<ver>-rapt.zip` (renpy.org),
+   JDK Temurin **8** (Ren'Py ≤ 7.6 / 8.1) ou **21** (Ren'Py ≥ 7.7 / 8.2), outils Android pré-téléchargés
+   (`commandlinetools-win-<n>.zip` ou `sdk-tools-windows-<n>.zip`, numéro lu dans `rapt\buildlib\rapt\plat.py`), puis
+   `python.exe -EO renpy.py launcher renpyhd_android_installsdk --org <nom> [--keys-dir android\keys]` (interface RAPT
+   scriptée : conditions acceptées via `RAPT_NO_TERMS`, réponses « oui », licences via `sdkmanager --licenses`).
+   Ren'Py 7.6+/8.1+ : clés par projet (`rapt\buildlib\rapt\keys.py`) ; 7.0–7.5/8.0 : clé dans `rapt\android.keystore`.
+   Version absente : correctif suivant de la même série, sinon dernière version de la même majeure. Ren'Py 7.0–7.3 : le RAPT
+   d'origine (Gradle 4.4, `jcenter()` + `dl.bintray.com`, fermé) ne construit plus → dernier Ren'Py 7 (7.8.x) proposé.
+3. **Configurer** — `.android.json` (clés RAPT : `package`, `name`, `icon_name`, `version`, `numeric_version`, `orientation`,
+   `permissions`, `include_pil`, `include_sqlite`, `layout`, `source`, `expansion`, `google_play_key`, `google_play_salt`,
+   `store`, `update_icons`, `update_always` + `heap_size`, `update_keystores` pour 7.4+/8.x), icônes
+   `android-icon_foreground.png` / `android-icon_background.png` générées depuis `gui/window_icon.png`, vidéos, limite de
+   taille des images (dossiers pris dans l'ordre), archives `.rpa` déjà extraites exclues, `.rpyc` du jeu utilisés tels quels
+   (recommandé quand le SDK n'a pas la version exacte : le SDK ne recompile pas les `.rpy`), app bundle `.aab`.
+4. **Construire** — copie de construction puis commande officielle du lanceur : Ren'Py 7.0–7.3
+   `renpy.py launcher android_build <projet> assembleRelease --destination <dossier>`, Ren'Py 7.4+/8.x
+   `renpy.py launcher android_build <projet> [--bundle] --destination <dossier>` (`JAVA_HOME` = JDK portable,
+   `GRADLE_USER_HOME` = `android\gradle`, démon Gradle désactivé). Sortie : APK universel (arm64-v8a, armeabi-v7a, x86_64),
+   vérification `zipfile` + `apksigner verify` (build-tools installés par Gradle), « Ouvrir le dossier », « Installer sur le
+   téléphone » (`platform-tools\adb.exe install -r`).
+
+Limites : APK ≤ ≈ 2 Go (Android) ; pas d'expansion APK ni de clé Google Play ; Ren'Py < 7.0 non pris en charge ; Ren'Py ≥ 7.8/8.3
+prend la version de l'APK dans `config.version` du jeu (chiffres et points seulement, sinon `1.0`) ; les scripts décompilés par unrpyc
+ne servent qu'à la copie de construction. Drapeaux : `ANDROID_BUNDLE_ENABLED`, `ANDROID_ADB_ENABLED`, `ANDROID_UNRPYC_ENABLED`.
+
 ## Langue de l'interface
 `app\i18n\<code>.json` : `fr` (référence), `en`, `es`, `de`, `ru`, `pt-BR`. Toute clé absente d'une langue retombe sur le
 français. Ordre de choix : `--lang xx`, puis `ui_lang` dans `renpy_hd_config.json`, puis langue d'affichage de Windows, sinon

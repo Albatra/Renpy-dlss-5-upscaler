@@ -51,6 +51,14 @@ setup.bat
   1. *Extract the texts* (the game's Ren'Py engine generates `game\tl\<language>\`),
   2. *Export* numbered `.txt` files and translate them with the service of your choice,
   3. *Import* the translated files and *Install*. In game, **Shift+L** toggles the language.
+- **Android (APK)** — builds an APK of the game with the official **Ren'Py SDK + RAPT**, driven without any prompt:
+  1. *Choose the game* (Ren'Py version, scripts, images/videos, estimated size),
+  2. *Prepare the environment* once per Ren'Py version (SDK + RAPT from renpy.org, portable Temurin JDK 8 or 21, Android
+     SDK through RAPT, signing keys in `android\keys\` — **back them up**),
+  3. *Configure* (name, package id, version, orientation, icon, videos, image size limit),
+  4. *Build* (progress, log, cancel), then *Open folder* or *Install on the phone (adb)*.
+  Works with Ren'Py 7.4+ and 8.x SDKs; Ren'Py 7.0–7.3 games are built with the latest Ren'Py 7 SDK (their original RAPT
+  depends on closed repositories). HD 2x images and DLSS backups are never included. Universal APK ≤ ≈ 2 GB.
 
 ## Good to know
 

@@ -9,7 +9,8 @@ Onglets :
                            que voulez-vous améliorer ? (images / vidéos, préréglage, facteur) → aperçu (10 images + 3 s de vidéo)
                            → « Améliorer le jeu » (progression, état final, Jouer) ; tout le reste dans l'accordéon « Mode expert »
   2. Comparer / Tester     sous-onglets : Comparer avant/après (curseur + loupe 1:1), Tester une image, Tester une vidéo
-  3. Outils                sous-onglets : Extraire les archives (.rpa), Traduire le jeu (extraire → exporter → importer/installer)
+  3. Outils                sous-onglets : Extraire les archives (.rpa), Traduire le jeu (extraire → exporter → importer/installer),
+                           Android (APK) (choisir le jeu → préparer l'environnement → configurer → construire)
   4. Aide
 
 Code de sortie 75 = « redémarrer » (changement de langue) : le lanceur relance le même processus.
@@ -65,6 +66,7 @@ TOOL_ROOT = Path(ARGS.tool).resolve()
 
 import renpy_hd_core as core  # noqa: E402
 import renpy_hd_tools as tools  # noqa: E402
+import renpy_hd_android as android  # noqa: E402
 
 
 def _choose_language() -> str:
@@ -1527,7 +1529,7 @@ def deeplink(request: gr.Request):
         q = {}
     tab, sub, game = q.get("tab", ""), q.get("sub", ""), _clean_path(q.get("game", ""))
     fill = game if game else gr.update()
-    return [gr.Tabs(selected=tab) if tab else gr.update(), gr.Tabs(selected=sub) if sub else gr.update(), fill, fill, fill]
+    return [gr.Tabs(selected=tab) if tab else gr.update(), gr.Tabs(selected=sub) if sub else gr.update(), fill, fill, fill, fill]
 
 
 def tl_generate(game_root: str, target_label: str, merge: bool):
@@ -1714,6 +1716,326 @@ def tl_uninstall(game_root: str, target_label: str, remove_tl: bool):
         return "  \n".join(tools.uninstall_translation(root, lang, bool(remove_tl))), tl_status_md(root, target_label)
     except Exception as exc:
         return t("err.generic", err=exc), gr.update()
+
+
+# ---- Android (APK) -----------------------------------------------------------
+_ANDROID: dict[str, object] = {"analysis": None, "sdk": None, "jdk": None, "build": None, "cfg": None, "sdk_version": ""}
+ORIENTATION_LABELS = {t(f"android.orientation.{k}"): k for k in android.ORIENTATIONS}
+STEP_A1_HINT = t("android.step1_hint")
+A_CFG_KEYS = ("name", "icon_name", "package", "version", "numeric", "orientation", "internet", "videos", "budget", "icon", "bundle", "decompile",
+              "skip_rpa", "prefer_rpyc", "estimate")
+
+
+def _a_version_from_choice(choice: str) -> str:
+    return str(choice or "").split(" ")[0].strip()
+
+
+def _a_env_md(version: str, manual_sdk: str) -> tuple[str, bool]:
+    """Ligne d'état de l'environnement pour la version choisie ; (markdown, prêt)."""
+    if not version and not manual_sdk:
+        return "", False
+    try:
+        st = android.env_status(version, _clean_path(manual_sdk))
+    except Exception as exc:
+        return t("err.generic", err=exc), False
+    sdk = st["sdk"]
+    if st["ready"]:
+        fam = android.load_matrix()["families"].get(sdk.family, {}).get("label", sdk.family)
+        return t("android.env.ready", version=sdk.version, family=fam, jdk=sdk.jdk_major), True
+    fam_jdk = sdk.jdk_major if sdk else android.load_matrix()["families"][android.family_for(version)]["jdk"]
+    items = []
+    if not st["sdk_present"] or not st["rapt_present"]:
+        items.append(t("android.env.item.sdk", version=version))
+    if st["jdk"] is None:
+        items.append(t("android.env.item.jdk", jdk=fam_jdk))
+    if not st["android_installed"]:
+        items.append(t("android.env.item.android"))
+    if not st["keys"]:
+        items.append(t("android.env.item.keys"))
+    return t("android.env.missing", items=", ".join(items) or "—") + "  \n" + t("android.env.sizes"), False
+
+
+def _a_estimate_md(a: android.AndroidAnalysis, include_videos: bool, budget_mb: float, skip_rpa: bool) -> str:
+    est = a.estimated_apk(bool(include_videos), int(budget_mb or 0) * 1024 * 1024, bool(skip_rpa))
+    msg = t("android.cfg.estimate", size=core.human_size(est))
+    if est > 2 * 1024 ** 3:
+        msg += "  \n" + t("android.cfg.too_big")
+    return msg
+
+
+def _a_cfg_updates(a: android.AndroidAnalysis, sdk_version: str) -> list:
+    """Valeurs par défaut des champs de l'étape 3 (dans l'ordre de A_CFG_KEYS)."""
+    cfg = android.default_config(a, sdk_version)
+    sdk = _ANDROID.get("sdk")
+    supports_bundle = bool(android.ANDROID_BUNDLE_ENABLED and (sdk.supports_bundle if isinstance(sdk, android.SdkInfo) else a.family != "legacy"))
+    show_decompile = bool(a.rpy_missing) and android.ANDROID_UNRPYC_ENABLED
+    return [
+        cfg.name, cfg.icon_name, cfg.package, cfg.version, cfg.numeric_version,
+        {v: k for k, v in ORIENTATION_LABELS.items()}.get(cfg.orientation, list(ORIENTATION_LABELS)[0]),
+        cfg.internet,
+        gr.update(value=False, label=t("android.cfg.videos", n=a.videos_count, size=core.human_size(a.videos_bytes)), visible=a.videos_count > 0),
+        0, cfg.icon_path,
+        gr.update(value=False, visible=supports_bundle),
+        gr.update(value=show_decompile, visible=show_decompile),
+        gr.update(value=True, label=t("android.cfg.skip_rpa", n=len(a.rpa_extracted), size=core.human_size(a.rpa_extracted_bytes)), visible=bool(a.rpa_extracted)),
+        gr.update(value=cfg.prefer_rpyc, visible=a.rpyc_count > 0),
+        _a_estimate_md(a, False, 0, True),
+    ]
+
+
+def android_estimate(include_videos: bool, budget_mb: float, skip_rpa: bool) -> str:
+    a = _ANDROID.get("analysis")
+    return _a_estimate_md(a, include_videos, budget_mb, skip_rpa) if isinstance(a, android.AndroidAnalysis) else ""
+
+
+def android_analyze(game_root: str):
+    """Étape 1 : analyse. Sorties : résumé, corps 2, indice 2, choix du SDK, état env, corps 3, indice 3, corps 4, indice 4, champs de config."""
+    shown, hidden = gr.update(visible=True), gr.update(visible=False)
+    root = _clean_path(game_root)
+    blank_cfg = [gr.update()] * len(A_CFG_KEYS)
+    closed = [hidden, shown, gr.update(choices=[], value=None), "", hidden, shown, hidden, shown]
+    if not root:
+        return [STEP_A1_HINT] + closed + blank_cfg
+    try:
+        a = android.analyze_game(root)
+    except Exception as exc:
+        return [t("err.analyze_short", err=exc)] + closed + blank_cfg
+    _ANDROID["analysis"] = a
+    lines = []
+    sdk_version, reason = a.sdk_version, a.sdk_reason
+    if reason == "unsupported" or not sdk_version:
+        lines.append(t("android.an.summary", version=a.version, sdk="—", reason=t(f"android.reason.{reason}")))
+        return ["  \n".join(lines)] + closed + blank_cfg
+    if a.family == "legacy":
+        versions, _online = android.known_versions()
+        v7 = [v for v in versions if android.vtuple(v)[0] == 7]
+        latest7 = v7[-1] if v7 else sdk_version
+        lines.append(t("android.an.legacy_warn", version=a.version, sdk=latest7))
+        sdk_version, reason = latest7, "same_major"
+    lines.append(t("android.an.summary", version=a.version, sdk=sdk_version, reason=t(f"android.reason.{reason}")))
+    if not a.online:
+        lines.append(t("android.an.offline"))
+    if a.rpy_missing:
+        lines.append(t("android.an.scripts_missing", n=len(a.rpy_missing), examples=", ".join(a.rpy_missing[:4]) + ("…" if len(a.rpy_missing) > 4 else "")))
+    else:
+        lines.append(t("android.an.scripts_ok", rpy=a.rpy_count, rpyc=a.rpyc_count))
+    if a.has_hd2x:
+        lines.append(t("android.an.hd2x", size=core.human_size(a.excluded_bytes)))
+    if a.has_hook:
+        lines.append(t("android.an.hook"))
+    if a.has_backup:
+        lines.append(t("android.an.backup"))
+    lines.append(t("android.an.images", n=a.images_count, size=core.human_size(a.images_bytes)))
+    if a.videos_count:
+        lines.append(t("android.an.videos", n=a.videos_count, size=core.human_size(a.videos_bytes)))
+    if a.rpa_count:
+        lines.append(t("android.an.rpa", n=a.rpa_count, size=core.human_size(a.rpa_bytes), extracted=len(a.rpa_extracted), esize=core.human_size(a.rpa_extracted_bytes)))
+    if a.has_tl:
+        lines.append(t("android.an.tl"))
+    if a.existing_json:
+        lines.append(t("android.an.json", package=a.existing_json.get("package", "?"), version=a.existing_json.get("version", "?")))
+    est = a.estimated_apk(False, 0, True)
+    lines.append(t("android.an.estimate", size=core.human_size(est)))
+    if est > 2 * 1024 ** 3:
+        lines.append(t("android.an.too_big"))
+    _ANDROID["sdk_version"] = sdk_version
+    choices = [f"{sdk_version} — " + t("android.sdk_auto", version=sdk_version, reason=t(f"android.reason.{reason}"))]
+    choices += [v for v in android.installed_sdk_versions() if v != sdk_version]
+    env_md, ready = _a_env_md(sdk_version, "")
+    if ready:
+        st = android.env_status(sdk_version)
+        _ANDROID["sdk"], _ANDROID["jdk"] = st["sdk"], st["jdk"]
+    return (["  \n".join(lines), shown, hidden, gr.update(choices=choices, value=choices[0]), env_md,
+             shown if ready else hidden, hidden if ready else shown, shown if ready else hidden, hidden if ready else shown]
+            + _a_cfg_updates(a, sdk_version))
+
+
+def android_env_refresh(sdk_choice: str, manual_sdk: str):
+    return _a_env_md(_a_version_from_choice(sdk_choice), manual_sdk)[0]
+
+
+def android_prepare(game_root: str, sdk_choice: str, manual_sdk: str, org: str, with_unrpyc: bool):
+    """Étape 2 (générateur). Sorties : statut, barre, journal, note clés, corps 3, indice 3, corps 4, indice 4, état env, case .rpyc."""
+    shown, hidden, keep = gr.update(visible=True), gr.update(visible=False), gr.update()
+    if _tools_busy():
+        yield [t("tools.busy")] + [keep] * 9
+        return
+    a = _ANDROID.get("analysis")
+    version = _a_version_from_choice(sdk_choice)
+    if not isinstance(a, android.AndroidAnalysis) or (not version and not _clean_path(manual_sdk)):
+        yield [t("android.need_analysis"), "", ""] + [keep] * 7
+        return
+    thread, log_q, latest = _tools_thread(
+        lambda log, prog, cancel: android.prepare_environment(version, str(org or "RenPyHD"), bool(with_unrpyc), log, prog, cancel, _clean_path(manual_sdk)))
+    lines: list[str] = []
+    while thread.is_alive():
+        _drain(log_q, lines)
+        p: android.Progress | None = latest["progress"]  # type: ignore[assignment]
+        if p is None:
+            txt, frac = t("android.phase.sdk") + "…", 0.0
+        else:
+            frac = p.fraction
+            extra = f" — {core.human_size(p.bytes_done)} / {core.human_size(p.bytes_total)}" if p.bytes_total else ""
+            txt = t("android.preparing", phase=p.phase, pct=f"{100 * frac:.0f}", elapsed=core.format_eta(p.elapsed), extra=extra)
+        yield [txt, _bar_html(frac, f"{100 * frac:.0f} %"), "\n".join(lines[-300:])] + [keep] * 7
+        time.sleep(0.5)
+    _drain(log_q, lines)
+    if latest["error"]:
+        lines.append("ERREUR : " + str(latest["error"]))
+        yield [t("android.prep_failed", err=str(latest["error"]).splitlines()[0]), "", "\n".join(lines[-300:])] + [keep] * 7
+        return
+    r: android.PrepResult = latest["result"]  # type: ignore[assignment]
+    if r.cancelled:
+        yield [t("android.prep_cancelled"), _bar_html(0.0, t("progress.cancelled")), "\n".join(lines[-300:])] + [keep] * 7
+        return
+    if r.error or r.sdk is None:
+        yield [t("android.prep_failed", err=r.error), "", "\n".join(lines[-300:])] + [keep] * 7
+        return
+    _ANDROID["sdk"], _ANDROID["jdk"], _ANDROID["sdk_version"] = r.sdk, r.jdk, r.sdk.version
+    keys_note = t("android.keys_created", dir=android.KEYS_DIR) if r.keys_created else ""
+    env_md, _ready = _a_env_md(r.sdk.version, "")
+    prefer = gr.update(value=not android.sdk_matches_game(r.sdk.version, a.version) and a.rpyc_count > 0, visible=a.rpyc_count > 0)
+    yield [t("android.prep_done", elapsed=core.format_eta(r.elapsed)), _bar_html(1.0, t("progress.done"), done=True), "\n".join(lines[-300:]),
+           keys_note, shown, hidden, shown, hidden, env_md, prefer]
+
+
+def _a_config_from(v: list) -> android.BuildConfig:
+    cfg = android.BuildConfig()
+    (name, icon_name, package, version, numeric, orientation_label, internet, videos, budget, icon, bundle, decompile, skip_rpa, prefer_rpyc, _estimate) = v
+    cfg.name, cfg.icon_name, cfg.package, cfg.version = str(name).strip(), str(icon_name).strip(), str(package).strip(), str(version).strip()
+    cfg.numeric_version = int(numeric or 0)
+    cfg.orientation = ORIENTATION_LABELS.get(orientation_label, "sensorLandscape")
+    cfg.image_budget_mb = int(budget or 0)
+    cfg.icon_path = _clean_path(icon)
+    cfg.internet, cfg.include_videos, cfg.bundle = bool(internet), bool(videos), bool(bundle)
+    cfg.decompile, cfg.skip_extracted_rpa, cfg.prefer_rpyc = bool(decompile), bool(skip_rpa), bool(prefer_rpyc)
+    return cfg
+
+
+def android_build(*v):
+    """Étape 4 (générateur) : copie de construction → décompilation (option) → android_build. Sorties : statut, barre, journal, bloc fin, md fin."""
+    hidden, keep = gr.update(visible=False), gr.update()
+    if _tools_busy():
+        yield t("tools.busy"), keep, keep, keep, keep
+        return
+    a, sdk, jdk = _ANDROID.get("analysis"), _ANDROID.get("sdk"), _ANDROID.get("jdk")
+    if not isinstance(a, android.AndroidAnalysis):
+        yield t("android.need_analysis"), "", "", hidden, ""
+        return
+    if not isinstance(sdk, android.SdkInfo) or jdk is None:
+        yield t("android.need_env"), "", "", hidden, ""
+        return
+    cfg = _a_config_from(list(v))
+    errs = android.validate_config(cfg)
+    if errs:
+        yield t("android.cfg.errors", errs=" ; ".join(errs)), "", "", hidden, ""
+        return
+    _ANDROID["cfg"] = cfg
+    stage_info: dict[str, object] = {}
+
+    def work(log, prog, cancel):
+        st = android.stage_build(a, cfg, sdk, log, prog, cancel)
+        stage_info["stage"] = st
+        if cfg.decompile and a.rpy_missing:
+            log(t("android.decompiling"))
+            stage_info["decompile"] = android.decompile_missing(sdk, st.build_dir, a.rpy_missing, log, cancel)
+        return android.build_apk(sdk, jdk, st.build_dir, cfg, log, prog, cancel)
+
+    thread, log_q, latest = _tools_thread(work)
+    lines: list[str] = []
+    t0 = time.time()
+    stage_phase = t("android.phase.stage")
+    while thread.is_alive():
+        _drain(log_q, lines)
+        p: android.Progress | None = latest["progress"]  # type: ignore[assignment]
+        if p is None:
+            txt, frac = stage_phase + "…", 0.0
+        elif p.phase == stage_phase:
+            frac = 0.1 * p.fraction
+            txt = t("android.staging", pct=f"{100 * p.fraction:.0f}", detail=p.detail)
+        else:
+            frac = 0.1 + 0.9 * p.fraction
+            txt = t("android.building", phase=p.phase, pct=f"{100 * frac:.0f}", elapsed=core.format_eta(time.time() - t0), detail=p.detail)
+        yield txt, _bar_html(frac, f"{100 * frac:.0f} %"), "\n".join(lines[-400:]), hidden, ""
+        time.sleep(0.5)
+    _drain(log_q, lines)
+    if latest["error"]:
+        lines.append("ERREUR : " + str(latest["error"]))
+        yield t("android.build_failed", err=str(latest["error"]).splitlines()[0], log=android.LOG_DIR), "", "\n".join(lines[-400:]), hidden, ""
+        return
+    r: android.BuildResult = latest["result"]  # type: ignore[assignment]
+    _ANDROID["build"] = r
+    if r.cancelled:
+        yield t("android.build_cancelled"), _bar_html(0.0, t("progress.cancelled")), "\n".join(lines[-400:]), hidden, ""
+        return
+    if not r.ok:
+        yield t("android.build_failed", err=r.error.replace("\n", "  \n"), log=r.log_file), "", "\n".join(lines[-400:]), hidden, ""
+        return
+    main = android.pick_main_apk(r.files)
+    md = t("android.build_done", elapsed=core.format_eta(r.elapsed), file=main, size=core.human_size(main.stat().st_size)) if main else ""
+    st = stage_info.get("stage")
+    if isinstance(st, android.StageResult):
+        md += "  \n" + t("android.staged_note", files=st.files, size=core.human_size(st.bytes), excluded=", ".join(st.excluded) or "—")
+        if st.images_skipped:
+            md += " " + t("android.images_limited", n=len(st.images_skipped))
+    if "decompile" in stage_info:
+        ok, errors = stage_info["decompile"]  # type: ignore[misc]
+        md += "  \n" + t("android.decompile_result", ok=ok, errors=len(errors))
+    if main:
+        try:
+            ver = android.verify_apk(sdk, jdk, main)
+            yes, no = t("android.yes"), t("android.no")
+            signed = yes if ver.get("signed") else (no if ver.get("signed") is False else "?")
+            md += "  \n" + t("android.verify", entries=ver.get("entries", 0), manifest=yes if ver.get("manifest") else no, game=ver.get("game_files", 0),
+                             libs=", ".join(ver.get("libs", [])) or "—", signed=signed)
+        except Exception as exc:
+            md += "  \n" + t("err.plain", err=exc)
+    others = [f.name for f in r.files if f != main]
+    if others:
+        md += "  \n" + t("android.other_files", list=", ".join(others))
+    yield "", _bar_html(1.0, t("progress.done"), done=True), "\n".join(lines[-400:]), gr.update(visible=True), md
+
+
+def android_open_out():
+    r = _ANDROID.get("build")
+    if isinstance(r, android.BuildResult) and r.out_dir:
+        android.open_folder(r.out_dir)
+    return gr.update()
+
+
+def android_open_keys():
+    android.KEYS_DIR.mkdir(parents=True, exist_ok=True)
+    android.open_folder(android.KEYS_DIR)
+    return gr.update()
+
+
+def android_devices():
+    sdk = _ANDROID.get("sdk")
+    if not isinstance(sdk, android.SdkInfo):
+        return t("android.need_env")
+    devs = android.adb_devices(sdk)
+    return t("android.devices", list=", ".join(devs)) if devs else t("android.no_device")
+
+
+def android_install():
+    sdk, r = _ANDROID.get("sdk"), _ANDROID.get("build")
+    if not isinstance(sdk, android.SdkInfo) or not isinstance(r, android.BuildResult) or not r.files:
+        return t("android.need_env")
+    devs = android.adb_devices(sdk)
+    main = android.pick_main_apk(r.files)
+    if not devs or main is None or main.suffix.lower() != ".apk":
+        return t("android.no_device")
+    rc, out = android.adb_install(sdk, main, lambda _m: None)
+    return t("android.install_done", device=devs[0]) if rc == 0 else t("android.install_failed", rc=rc, out=out[-400:])
+
+
+def android_icon_browse(current: str):
+    initial = str(Path(_clean_path(current)).parent) if _clean_path(current) else ""
+    return core.pick_file(t("android.cfg.icon"), core.IMAGE_DIALOG_FILTER, initial) or current
+
+
+def android_sdk_browse(current: str):
+    return core.pick_folder(t("android.manual_sdk"), _clean_path(current)) or current
 
 
 # ----------------------------------------------------------------------------
@@ -2127,9 +2449,86 @@ def build_ui() -> gr.Blocks:
                                     t_uninstall_tl = gr.Checkbox(True, label=t("tools.tl.uninstall_tl"), scale=0, min_width=330)
                                 t_check_status = gr.Markdown("")
 
+                    # ---- Android (APK)
+                    with gr.Tab(t("android.tab"), id="sub_android"):
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(1, t("step1.title")))
+                            with gr.Row():
+                                a_root = gr.Textbox(label=t("step1.game_root"), scale=5, lines=1, max_lines=1, placeholder=r"D:\Games\MyGame-pc")
+                                a_browse = gr.Button(t("common.browse"), variant="primary", scale=1, min_width=170)
+                                a_analyze = gr.Button(t("android.analyze"), scale=1, min_width=190)
+                            a_summary = gr.Markdown(STEP_A1_HINT, elem_classes=["rhd-hint"])
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(2, t("android.step2_title")))
+                            a_step2_hint = gr.Markdown(t("android.step2_wait"), elem_classes=["rhd-hint"])
+                            with gr.Column(visible=False) as a_step2:
+                                gr.Markdown(t("android.step2_hint"), elem_classes=["rhd-hint"])
+                                with gr.Row():
+                                    a_sdk = gr.Dropdown([], label=t("android.sdk_choice"), scale=3, allow_custom_value=True)
+                                    a_org = gr.Textbox("RenPyHD", label=t("android.org"), scale=2, lines=1, max_lines=1)
+                                with gr.Row():
+                                    a_manual_sdk = gr.Textbox(label=t("android.manual_sdk"), scale=5, lines=1, max_lines=1)
+                                    a_manual_browse = gr.Button(t("common.browse"), scale=1, min_width=110)
+                                a_unrpyc = gr.Checkbox(True, label=t("android.with_unrpyc"), visible=android.ANDROID_UNRPYC_ENABLED)
+                                a_env_md = gr.Markdown("", elem_classes=["rhd-hint"])
+                                a_prepare = gr.Button(t("android.prepare"), variant="primary", elem_id="go-btn")
+                                a_prep_bar = gr.HTML("")
+                                a_prep_status = gr.Markdown("")
+                                a_keys_note = gr.Markdown("")
+                                gr.Markdown(t("android.keys_warning"))
+                                with gr.Row():
+                                    a_open_keys = gr.Button(t("android.open_keys"), size="sm", scale=0, min_width=220)
+                                    a_prep_cancel = gr.Button(t("common.cancel"), variant="stop", size="sm", scale=0, min_width=130)
+                                with gr.Accordion(t("common.details_log"), open=False):
+                                    a_prep_log = gr.Textbox(label=t("common.log"), lines=12, max_lines=12, interactive=False, autoscroll=True, elem_id="log")
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(3, t("android.step3_title")))
+                            a_step3_hint = gr.Markdown(t("android.step3_wait"), elem_classes=["rhd-hint"])
+                            with gr.Column(visible=False) as a_step3:
+                                gr.Markdown(t("android.step3_hint"), elem_classes=["rhd-hint"])
+                                with gr.Row():
+                                    a_name = gr.Textbox(label=t("android.cfg.name"), scale=3, lines=1, max_lines=1)
+                                    a_icon_name = gr.Textbox(label=t("android.cfg.icon_name"), scale=2, lines=1, max_lines=1)
+                                    a_package = gr.Textbox(label=t("android.cfg.package"), scale=3, lines=1, max_lines=1)
+                                with gr.Row():
+                                    a_version = gr.Textbox("1.0", label=t("android.cfg.version"), scale=1, lines=1, max_lines=1)
+                                    a_numeric = gr.Number(100, precision=0, minimum=1, label=t("android.cfg.numeric"), scale=1)
+                                    a_orientation = gr.Radio(list(ORIENTATION_LABELS), value=list(ORIENTATION_LABELS)[0], label=t("android.cfg.orientation"), scale=2)
+                                    a_internet = gr.Checkbox(False, label=t("android.cfg.internet"), scale=1)
+                                with gr.Row():
+                                    a_icon = gr.Textbox(label=t("android.cfg.icon"), scale=5, lines=1, max_lines=1)
+                                    a_icon_browse = gr.Button(t("common.browse"), scale=1, min_width=110)
+                                gr.Markdown(t("android.cfg.images"), elem_classes=["rhd-hint"])
+                                with gr.Row():
+                                    a_budget = gr.Number(0, precision=0, minimum=0, label=t("android.cfg.budget"), scale=2)
+                                    a_videos = gr.Checkbox(False, label=t("android.cfg.videos", n=0, size="0"), scale=2, visible=False)
+                                a_skip_rpa = gr.Checkbox(True, label=t("android.cfg.skip_rpa", n=0, size="0"), visible=False)
+                                a_prefer_rpyc = gr.Checkbox(False, label=t("android.cfg.prefer_rpyc"), visible=False)
+                                a_decompile = gr.Checkbox(False, label=t("android.cfg.decompile"), visible=False)
+                                a_bundle = gr.Checkbox(False, label=t("android.cfg.bundle"), visible=android.ANDROID_BUNDLE_ENABLED)
+                                a_estimate = gr.Markdown("", elem_classes=["rhd-hint"])
+                        with gr.Column(elem_classes=["rhd-step"]):
+                            gr.HTML(_step_title(4, t("android.step4_title")))
+                            a_step4_hint = gr.Markdown(t("android.step4_wait"), elem_classes=["rhd-hint"])
+                            with gr.Column(visible=False) as a_step4:
+                                a_go = gr.Button(t("android.build"), variant="primary", elem_id="go-btn")
+                                a_bar = gr.HTML("")
+                                a_status = gr.Markdown("")
+                                with gr.Column(visible=False) as a_done:
+                                    a_done_md = gr.Markdown("")
+                                    with gr.Row():
+                                        a_open_out = gr.Button(t("android.open_folder"), min_width=200)
+                                        a_install = gr.Button(t("android.install_adb"), min_width=260, visible=android.ANDROID_ADB_ENABLED)
+                                        a_devices = gr.Button(t("android.refresh_devices"), size="sm", min_width=200, visible=android.ANDROID_ADB_ENABLED)
+                                    a_device_md = gr.Markdown("")
+                                with gr.Row():
+                                    a_cancel = gr.Button(t("common.cancel"), variant="stop", size="sm", scale=0, min_width=130)
+                                with gr.Accordion(t("common.details_log"), open=False):
+                                    a_log = gr.Textbox(label=t("common.log"), lines=14, max_lines=14, interactive=False, autoscroll=True, elem_id="log")
+
             # ---------------------------------------------------------- Onglet 4
             with gr.Tab(t("tab.help"), id="tab_help"):
-                gr.Markdown(t("help.md", version=APP_VERSION))
+                gr.Markdown(t("help.md", version=APP_VERSION) + t("help.android.md"))
 
         # ------------------------------------------------------------ câblage
         INPUT_KEYS = list(inputs)
@@ -2263,8 +2662,12 @@ def build_ui() -> gr.Blocks:
         t_root.submit(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
         t_target.change(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
         # ouverture directe d'un onglet / d'un jeu par l'URL (?tab=tab_tools&sub=sub_rpa&game=…)
-        demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root], queue=False).then(
-            rpa_scan, x_root, x_scan_outputs, queue=False).then(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
+        a_cfg_fields = [a_name, a_icon_name, a_package, a_version, a_numeric, a_orientation, a_internet, a_videos, a_budget, a_icon, a_bundle,
+                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_estimate]
+        a_analyze_outputs = [a_summary, a_step2, a_step2_hint, a_sdk, a_env_md, a_step3, a_step3_hint, a_step4, a_step4_hint] + a_cfg_fields
+        demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root, a_root], queue=False).then(
+            rpa_scan, x_root, x_scan_outputs, queue=False).then(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False).then(
+            android_analyze, a_root, a_analyze_outputs)
         t_gen.click(tl_generate, [t_root, t_target, t_merge], [t_gen_status, t_step2, t_step3, t_step2_hint, t_step3_hint, t_state],
                     concurrency_limit=1, show_progress="minimal")
         t_export.click(tl_export, [t_root, t_target, t_export_base, t_export_chunk, t_export_mb, t_export_idfmt, t_export_scope, t_export_tags, t_export_only],
@@ -2275,6 +2678,37 @@ def build_ui() -> gr.Blocks:
         t_install.click(tl_install, [t_root, t_target], [t_install_status, t_state])
         t_check.click(tl_check, [t_root, t_target], t_check_status, concurrency_limit=1, show_progress="minimal")
         t_uninstall.click(tl_uninstall, [t_root, t_target, t_uninstall_tl], [t_install_status, t_state])
+
+        # ---- Android (APK)
+        for ev in ("input", "blur"):
+            getattr(inputs["game_root"], ev)(lambda v: v, inputs["game_root"], a_root, queue=False)
+            getattr(a_root, ev)(lambda v: v, a_root, inputs["game_root"], queue=False)
+        browse_game.click(lambda v: v, inputs["game_root"], a_root, queue=False)
+        x_root.input(lambda v: v, x_root, a_root, queue=False)
+        t_root.input(lambda v: v, t_root, a_root, queue=False)
+        a_root.input(lambda v: v, a_root, x_root, queue=False)
+        a_root.input(lambda v: v, a_root, t_root, queue=False)
+        a_browse.click(browse(t("dialog.pick_game")), a_root, a_root).then(
+            lambda v: v, a_root, inputs["game_root"], queue=False).then(lambda v: v, a_root, x_root, queue=False).then(
+            lambda v: v, a_root, t_root, queue=False).then(android_analyze, a_root, a_analyze_outputs)
+        a_analyze.click(android_analyze, a_root, a_analyze_outputs)
+        a_root.submit(android_analyze, a_root, a_analyze_outputs)
+        a_sdk.change(android_env_refresh, [a_sdk, a_manual_sdk], a_env_md, queue=False)
+        a_manual_sdk.change(android_env_refresh, [a_sdk, a_manual_sdk], a_env_md, queue=False)
+        a_manual_browse.click(android_sdk_browse, a_manual_sdk, a_manual_sdk)
+        a_prepare.click(android_prepare, [a_root, a_sdk, a_manual_sdk, a_org, a_unrpyc],
+                        [a_prep_status, a_prep_bar, a_prep_log, a_keys_note, a_step3, a_step3_hint, a_step4, a_step4_hint, a_env_md, a_prefer_rpyc],
+                        concurrency_limit=1, show_progress="minimal")
+        a_prep_cancel.click(tools_cancel, None, a_prep_status, queue=False)
+        a_open_keys.click(android_open_keys, None, None, queue=False)
+        a_icon_browse.click(android_icon_browse, a_icon, a_icon)
+        for comp in (a_videos, a_budget, a_skip_rpa):
+            comp.change(android_estimate, [a_videos, a_budget, a_skip_rpa], a_estimate, queue=False)
+        a_go.click(android_build, a_cfg_fields, [a_status, a_bar, a_log, a_done, a_done_md], concurrency_limit=1, show_progress="minimal")
+        a_cancel.click(tools_cancel, None, a_status, queue=False)
+        a_open_out.click(android_open_out, None, None, queue=False)
+        a_devices.click(android_devices, None, a_device_md)
+        a_install.click(android_install, None, a_device_md, concurrency_limit=1)
     return demo
 
 

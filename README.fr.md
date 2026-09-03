@@ -100,6 +100,26 @@ natif de Ren'Py (`game/tl/<langue>/`).
    erreurs / numéros manquants, table de relecture), puis *Installer la traduction* : le jeu démarre dans la langue choisie,
    **Maj+L** bascule entre traduction et original. *Vérifier en lançant le jeu* et *Désinstaller* sont là aussi.
 
+## Construire un APK Android (onglet Outils › Android (APK))
+
+RenPyHD construit un APK du jeu avec les outils officiels — le **SDK Ren'Py** de la version du jeu et **RAPT** (Ren'Py
+Android Packaging Tool) — pilotés en ligne de commande sans aucune question. Quatre étapes :
+
+1. **Choisir le jeu** — version de Ren'Py, `.rpy` présents pour chaque `.rpyc` (sinon décompilation *unrpyc* proposée, sur
+   une copie seulement), images HD 2x / sauvegardes DLSS / hook (toujours exclus : trop lourds pour un téléphone), images,
+   vidéos, archives `.rpa` déjà extraites, taille estimée de l'APK.
+2. **Préparer l'environnement** — une seule fois par version de Ren'Py, reprenable : SDK Ren'Py + RAPT (renpy.org), JDK
+   portable Temurin (8 pour Ren'Py ≤ 7.6 / 8.1, 21 pour Ren'Py ≥ 7.7 / 8.2), SDK Android (Google, via RAPT), **clés de
+   signature** dans `android\keys\` — **sauvegardez-les**, sans elles un APK installé ne peut plus être mis à jour. Rien
+   n'est installé dans Windows : tout vit dans `android\` à côté de l'application.
+3. **Configurer** — nom, identifiant du paquet (`com.renpyhd.<jeu>`), version, orientation, icône, Internet, vidéos incluses
+   ou non, limite de taille des images, archives `.rpa` déjà extraites exclues, app bundle `.aab`.
+4. **Construire** — barre de progression, journal, annulation ; puis chemin et taille de l'APK, vérification (manifeste,
+   fichiers du jeu, signature), *Ouvrir le dossier*, *Installer sur le téléphone (adb)*.
+
+Fonctionne avec les SDK Ren'Py 7.4+ et 8.x ; les jeux Ren'Py 7.0–7.3 sont construits avec le dernier Ren'Py 7 (leur RAPT
+d'origine dépend de dépôts fermés). APK universel ≤ ≈ 2 Go ; pas d'expansion APK ni de clé Google Play.
+
 ## FAQ
 
 * **Une seule instance DLSS à la fois.** Le runtime DLSS partage un journal ReShade : deux traitements simultanés
@@ -128,7 +148,9 @@ la télémétrie Gradio est désactivée. Le seul accès réseau est le téléch
 
 ```
 app\          renpy_hd_app.py (interface), renpy_hd_core.py (moteur), renpy_hd_tools.py (.rpa, traduction),
+              renpy_hd_android.py + android_matrix.json + renpyhd_android_adapter.rpy (APK Android),
               renpy_hd_i18n.py + i18n\*.json (langues), zz_dlss_hd.rpy (hook Ren'Py), README.md (doc détaillée)
+android\      (créé à l'usage, ignoré par git) SDK Ren'Py + RAPT, JDK, SDK Android, clés, copies de construction, APK
 launcher\     launcher.cs + build_launcher.bat (RenPyHD.exe, compilé par setup.bat)
 tools\        README.md : rpaExtract.exe optionnel (non fourni)
 setup.bat / setup.ps1   installation ; run.bat : lancement sans l'exe ; build_release.ps1 : zip de release

@@ -1,0 +1,86 @@
+{
+  "_comment": "RenPyHD — compatibilité Ren'Py ↔ RAPT (Ren'Py Android Packaging Tool). Établie le 2026-09-03 à partir des archives réelles renpy-<ver>-rapt.zip (7.3.5, 7.4.11, 7.5.3, 7.6.3, 7.7.3, 7.8.7, 8.0.3, 8.1.2, 8.2.3, 8.3.7, 8.4.1, 8.5.3, 8.6.0). Les champs par famille sont des attentes ; le module relit toujours plat.py / install_sdk.py / android.rpy du SDK téléchargé (sdk_version, jdk_requirement, keys.py, forme de la commande android_build).",
+  "downloads": {
+    "index_url": "https://www.renpy.org/dl/",
+    "sdk_url": "https://www.renpy.org/dl/{ver}/renpy-{ver}-sdk.zip",
+    "rapt_url": "https://www.renpy.org/dl/{ver}/renpy-{ver}-rapt.zip",
+    "android_repository": "https://dl.google.com/android/repository/{archive}",
+    "jdk": {
+      "8": {"url": "https://api.adoptium.net/v3/binary/latest/8/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk", "file": "temurin-jdk8-windows-x64.zip", "dir_prefix": "jdk8u", "approx_mb": 106},
+      "21": {"url": "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk", "file": "temurin-jdk21-windows-x64.zip", "dir_prefix": "jdk-21", "approx_mb": 205}
+    },
+    "unrpyc": {
+      "py2": {"version": "1.3.2", "url": "https://github.com/CensoredUsername/unrpyc/archive/refs/tags/v1.3.2.zip", "dir": "unrpyc-1.3.2", "renpy": "6.x – 7.x (interpréteur Python 2 du SDK 7.x)"},
+      "py3": {"version": "2.0.4", "url": "https://github.com/CensoredUsername/unrpyc/archive/refs/tags/v2.0.4.zip", "dir": "unrpyc-2.0.4", "renpy": "8.x (interpréteur Python 3 du SDK 8.x)"}
+    }
+  },
+  "known_versions": ["7.0.0", "7.0.1", "7.1.0", "7.1.1", "7.1.2", "7.1.3", "7.1.4", "7.2.0", "7.2.1", "7.2.2", "7.3.0", "7.3.1", "7.3.2", "7.3.3", "7.3.4", "7.3.5",
+    "7.4.0", "7.4.1", "7.4.2", "7.4.3", "7.4.4", "7.4.5", "7.4.6", "7.4.7", "7.4.8", "7.4.9", "7.4.10", "7.4.11", "7.5.0", "7.5.1", "7.5.2", "7.5.3",
+    "7.6.0", "7.6.1", "7.6.2", "7.6.3", "7.7.0", "7.7.1", "7.7.2", "7.7.3", "7.8.0", "7.8.1", "7.8.2", "7.8.3", "7.8.4", "7.8.5", "7.8.6", "7.8.7",
+    "8.0.0", "8.0.1", "8.0.2", "8.0.3", "8.1.0", "8.1.1", "8.1.2", "8.1.3", "8.2.0", "8.2.1", "8.2.2", "8.2.3", "8.3.0", "8.3.1", "8.3.2", "8.3.3", "8.3.4", "8.3.5", "8.3.6", "8.3.7",
+    "8.4.0", "8.4.1", "8.5.0", "8.5.1", "8.5.2", "8.5.3", "8.6.0"],
+  "families": {
+    "legacy": {
+      "label": "Ren'Py 7.0 – 7.3 (RAPT ancien)",
+      "jdk": "8",
+      "python": "py2",
+      "sdk_python": ["lib/windows-i686/python.exe"],
+      "android_tools_archive": "sdk-tools-windows-{sdk_tools}.zip",
+      "keys": "rapt",
+      "android_json_keys": ["package", "name", "icon_name", "version", "numeric_version", "orientation", "permissions", "include_pil", "include_sqlite", "layout", "source", "expansion", "google_play_key", "google_play_salt", "store", "update_icons", "update_always"],
+      "install_command": ["launcher", "renpyhd_android_installsdk", "--org", "{org}"],
+      "build_command": ["launcher", "android_build", "{project}", "assembleRelease", "--destination", "{dest}"],
+      "bundle": false,
+      "outputs": "rapt/bin/<package>-<abi>-release.apk (universal + armeabi-v7a + arm64-v8a + x86_64)",
+      "caveat": "Gradle 4.4 / AGP 3.1.3 avec dépôts jcenter() et dl.bintray.com (fermé en 2021) : la construction peut échouer sur la résolution des dépendances ; RenPyHD propose alors le SDK 7.x suivant."
+    },
+    "gradle6": {
+      "label": "Ren'Py 7.4 – 7.6 et 8.0 – 8.1 (Gradle 6.1.1, AGP 4.0.1)",
+      "jdk": "8",
+      "python": "auto",
+      "sdk_python": ["lib/py3-windows-x86_64/python.exe", "lib/py2-windows-x86_64/python.exe", "lib/windows-x86_64/python.exe", "lib/windows-i686/python.exe"],
+      "android_tools_archive": "commandlinetools-win-{sdk_tools}.zip",
+      "keys": "auto",
+      "android_json_keys": ["package", "name", "icon_name", "version", "numeric_version", "orientation", "permissions", "include_pil", "include_sqlite", "layout", "source", "expansion", "google_play_key", "google_play_salt", "store", "update_icons", "update_always", "heap_size", "update_keystores"],
+      "install_command": ["launcher", "renpyhd_android_installsdk", "--org", "{org}", "--keys-dir", "{keys}"],
+      "build_command": ["launcher", "android_build", "{project}", "--destination", "{dest}"],
+      "bundle": true,
+      "outputs": "rapt/bin/<package>-<numeric_version>-release.apk (universel) ou app bundle .aab",
+      "caveat": "Dépôt jcenter() encore référencé (lecture seule chez JFrog) : fonctionne tant que le miroir répond."
+    },
+    "modern": {
+      "label": "Ren'Py 7.7+ et 8.2+ (Gradle 8.5 / 9.1, AGP 8.x, JDK 21)",
+      "jdk": "21",
+      "python": "auto",
+      "sdk_python": ["lib/py3-windows-x86_64/python.exe", "lib/py2-windows-x86_64/python.exe"],
+      "android_tools_archive": "commandlinetools-win-{sdk_tools}.zip",
+      "keys": "project",
+      "android_json_keys": ["package", "name", "icon_name", "version", "numeric_version", "orientation", "permissions", "include_pil", "include_sqlite", "layout", "source", "expansion", "google_play_key", "google_play_salt", "store", "update_icons", "update_always", "heap_size", "update_keystores"],
+      "install_command": ["launcher", "renpyhd_android_installsdk", "--org", "{org}", "--keys-dir", "{keys}"],
+      "build_command": ["launcher", "android_build", "{project}", "--destination", "{dest}"],
+      "bundle": true,
+      "outputs": "rapt/bin/<package>-<version>-<numeric_version>-release.apk (universel) ou app bundle .aab",
+      "caveat": ""
+    }
+  },
+  "versions": [
+    {"min": "7.0.0", "max": "7.3.5", "family": "legacy", "sdk_tools": "4333796", "platform": "android-28", "gradle": "4.4", "agp": "3.1.3", "jdk": "8", "confirmed": "7.3.5 : SDK + RAPT téléchargés, installation Android SDK et clés OK ; construction testée (voir rapport)"},
+    {"min": "7.4.0", "max": "7.4.11", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-30", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "7.4.11 : archive RAPT inspectée (déduit)"},
+    {"min": "7.5.0", "max": "7.5.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "7.5.3 : archive RAPT inspectée (déduit)"},
+    {"min": "7.6.0", "max": "7.6.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "project", "confirmed": "7.6.3 : archive RAPT inspectée (déduit)"},
+    {"min": "7.7.0", "max": "7.7.3", "family": "modern", "sdk_tools": "9477386_latest", "platform": "android-33", "gradle": "8.5", "agp": "8.2.0", "jdk": "21", "keys": "project", "confirmed": "7.7.3 : archive RAPT inspectée (déduit)"},
+    {"min": "7.8.0", "max": "7.8.7", "family": "modern", "sdk_tools": "11076708_latest", "platform": "android-35", "gradle": "8.5", "agp": "8.2.0", "jdk": "21", "keys": "project", "confirmed": "7.8.7 : archive RAPT inspectée (déduit)"},
+    {"min": "8.0.0", "max": "8.0.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "8.0.3 : archive RAPT inspectée (déduit)"},
+    {"min": "8.1.0", "max": "8.1.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "project", "confirmed": "8.1.2 : SDK + RAPT téléchargés, installation Android SDK et clés OK ; construction testée (voir rapport)"},
+    {"min": "8.2.0", "max": "8.2.3", "family": "modern", "sdk_tools": "9477386_latest", "platform": "android-33", "gradle": "8.5", "agp": "8.2.0", "jdk": "21", "keys": "project", "confirmed": "8.2.3 : archive RAPT inspectée (déduit)"},
+    {"min": "8.3.0", "max": "8.3.7", "family": "modern", "sdk_tools": "11076708_latest", "platform": "android-35", "gradle": "8.5", "agp": "8.2.0", "jdk": "21", "keys": "project", "confirmed": "8.3.7 : archive RAPT inspectée (déduit)"},
+    {"min": "8.4.0", "max": "8.4.1", "family": "modern", "sdk_tools": "11076708_latest", "platform": "android-35", "gradle": "8.5", "agp": "8.2.0", "jdk": "21", "keys": "project", "confirmed": "8.4.1 : archive RAPT inspectée (déduit)"},
+    {"min": "8.5.0", "max": "8.5.3", "family": "modern", "sdk_tools": "11076708_latest", "platform": "android-36", "gradle": "9.1.0", "agp": "8.13.0", "jdk": "21", "keys": "project", "confirmed": "8.5.3 : archive RAPT inspectée (déduit)"},
+    {"min": "8.6.0", "max": "8.99.99", "family": "modern", "sdk_tools": "11076708_latest", "platform": "android-36", "gradle": "9.1.0", "agp": "8.13.0", "jdk": "21", "keys": "project", "confirmed": "8.6.0 : SDK + RAPT téléchargés, installation Android SDK OK (voir rapport)"}
+  ],
+  "fallback": {
+    "_comment": "Version absente du site : correctif supérieur de la même mineure, sinon dernière version de la même majeure, avec avertissement. Version < 7.0 : non prise en charge (RAPT Python 2 / Android SDK obsolètes).",
+    "unknown_major": "modern",
+    "min_supported": "7.0.0"
+  }
+}
