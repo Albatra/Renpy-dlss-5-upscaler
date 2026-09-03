@@ -26,7 +26,7 @@ Copy-Item (Join-Path $Root "launcher\launcher.cs"), (Join-Path $Root "launcher\b
 if (Test-Path (Join-Path $Root "launcher\renpyhd.ico")) { Copy-Item (Join-Path $Root "launcher\renpyhd.ico") (Join-Path $Stage "launcher\") }
 Copy-Item (Join-Path $Root "tools\README.md") (Join-Path $Stage "tools\")
 Copy-Item (Join-Path $Root "docs\screenshots\*") (Join-Path $Stage "docs\screenshots\")
-foreach ($f in @("RenPyHD.exe", "setup.bat", "setup.ps1", "run.bat", "README.md", "README.en.md", "LICENSE", "THIRD_PARTY.md", "CHANGELOG.md", "VERSION")) {
+foreach ($f in @("RenPyHD.exe", "setup.bat", "setup.ps1", "run.bat", "README.md", "README.fr.md", "LICENSE", "THIRD_PARTY.md", "CHANGELOG.md", "VERSION")) {
     Copy-Item (Join-Path $Root $f) (Join-Path $Stage $f)
 }
 
