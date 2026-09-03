@@ -1375,7 +1375,7 @@ def cleanup_after_build(sdk: SdkInfo, build_dir: Path) -> None:
               sdk.rapt / "project" / "app" / "build" / "intermediates", sdk.rapt / "project" / "app" / "build" / "outputs"):
         try:
             if d.is_dir():
-                shutil.rmtree(d, ignore_errors=True)
+                _rmtree_force(d)
         except Exception:
             pass
     bin_dir = sdk.rapt / "bin"
@@ -1772,10 +1772,10 @@ def delete_build(name: str) -> bool:
     d = OUT_DIR / name
     if not d.is_dir() or d.resolve().parent != OUT_DIR.resolve():
         return False
-    shutil.rmtree(d, ignore_errors=True)
+    _rmtree_force(d)
     b = BUILD_DIR / name
     if b.is_dir():
-        shutil.rmtree(b, ignore_errors=True)
+        _rmtree_force(b)
     return not d.exists()
 
 
@@ -1818,7 +1818,7 @@ def delete_cache(path: Path) -> bool:
         return False
     if KEYS_DIR.resolve() in p.parents or p == KEYS_DIR.resolve():
         return False
-    shutil.rmtree(p, ignore_errors=True)
+    _rmtree_force(p)
     return not p.exists()
 
 
