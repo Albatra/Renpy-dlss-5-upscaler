@@ -590,6 +590,27 @@ init 999 python:
 
     _renpyhd_apply_language()
 
+    # Le menu de langue du jeu (actions Language / SetPreference("language", …)) compte comme un choix explicite du joueur,
+    # sinon notre rappel de démarrage le remplacerait au lancement suivant. On enveloppe les actions, pas
+    # renpy.change_language lui-même (Ren'Py l'appelle en interne au démarrage et pendant lint).
+    def _renpyhd_wrap_action(cls, get_value):
+        orig = getattr(cls, "_renpyhd_orig_call", None) or cls.__call__
+        cls._renpyhd_orig_call = orig
+        def _call(self, *a, **k):
+            v = get_value(self)
+            if v is not False:
+                persistent._renpyhd_lang_choice = v or ""
+            return orig(self, *a, **k)
+        cls.__call__ = _call
+    try:
+        _renpyhd_wrap_action(Language, lambda self: self.language)
+    except Exception:
+        pass
+    try:
+        _renpyhd_wrap_action(SetPreference, lambda self: self.value if getattr(self, "name", None) == "language" else False)
+    except Exception:
+        pass
+
     def _renpyhd_toggle_language():
         target = None if _preferences.language == _renpyhd_lang else _renpyhd_lang
         persistent._renpyhd_lang_choice = target or ""
@@ -674,7 +695,8 @@ def tl_status(game_root: str, lang: str) -> dict:
         m = re.search(r'"([^"]+)"\s*#\s*RENPYHD:LANG', text) or re.search(r'default_language\s*=\s*"([^"]+)"', text)
         hook_lang = m.group(1) if m else "?"
     return {"exists": tl_dir.is_dir(), "ours": bool(manifest), "manifest": manifest, "hook": hook.is_file(), "hook_lang": hook_lang,
-            "rpy_files": sum(1 for _ in tl_dir.rglob("*.rpy")) if tl_dir.is_dir() else 0}
+            "rpy_files": sum(1 for _ in tl_dir.rglob("*.rpy")) if tl_dir.is_dir() else 0,
+            "menu_files": list(manifest.get("menu_files", []))}
 
 
 def generate_tl(game_root: str, lang: str, merge: bool, log: Callable[[str], None], cancel: threading.Event) -> GenerateResult:
@@ -1979,11 +2001,169 @@ def tl_counts(tl_dir: Path) -> tuple[int, int, int]:
 # ============================================================================
 # Traduction — C. installation, vérification, désinstallation
 # ============================================================================
-def install_language_hook(game_root: str, lang: str) -> Path:
+NATIVE_NAMES = {
+    "french": "Français", "spanish": "Español", "german": "Deutsch", "russian": "Русский", "portuguese": "Português",
+    "bportuguese": "Português (Brasil)", "italian": "Italiano", "chinese": "中文", "japanese": "日本語", "korean": "한국어",
+    "turkish": "Türkçe", "polish": "Polski", "english": "English", "dutch": "Nederlands", "ukrainian": "Українська",
+    "arabic": "العربية", "swedish": "Svenska", "czech": "Čeština", "hungarian": "Magyar", "romanian": "Română", "greek": "Ελληνικά",
+    "danish": "Dansk", "finnish": "Suomi", "norwegian": "Norsk", "indonesian": "Bahasa Indonesia", "vietnamese": "Tiếng Việt",
+    "thai": "ไทย", "hebrew": "עברית", "catalan": "Català",
+}
+MENU_MARK = "# RenPyHD"
+LANG_BUTTON_RE = re.compile(
+    r'^(?P<indent>[ \t]*)(?P<kw>textbutton|button|imagebutton)\b(?P<rest>.*?)\baction\s+'
+    r'(?:Language\(\s*(?P<lang>None|"[^"]*"|\'[^\']*\')\s*\)|SetPreference\(\s*"language"\s*,\s*(?P<lang2>None|"[^"]*"|\'[^\']*\')\s*\))')
+LANG_TEXT_RE = re.compile(r'_\(\s*"(?P<text>(?:[^"\\]|\\.)*)"\s*\)|"(?P<text2>(?:[^"\\]|\\.)*)"')
+COLOR_WRAP_RE = re.compile(r'^(?P<pre>(?:\{[^{}]*\})*)(?P<body>.*?)(?P<post>(?:\{/[^{}]*\})*)$')
+LAST_INSTALL_REPORT: dict = {}
+
+
+def _menu_groups(lines: list[str]) -> list[list[int]]:
+    """Indices des boutons de langue, groupés par bloc contigu (commentaires et lignes vides tolérés) de même indentation."""
+    groups: list[list[int]] = []
+    cur: list[int] = []
+    cur_indent = None
+    for i, ln in enumerate(lines):
+        m = LANG_BUTTON_RE.match(ln)
+        if m:
+            indent = m.group("indent")
+            if cur and indent != cur_indent:
+                groups.append(cur)
+                cur = []
+            cur.append(i)
+            cur_indent = indent
+            continue
+        stripped = ln.strip()
+        if cur and (not stripped or stripped.startswith("#")):
+            continue
+        if cur:
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def _build_menu_line(ref: str, lang: str, name: str) -> str:
+    """Bouton frère du bouton de référence : même indentation, même mot-clé, même habillage {color=…}, même style d'action."""
+    m = LANG_BUTTON_RE.match(ref)
+    assert m is not None
+    rest = m.group("rest")
+    tm = LANG_TEXT_RE.search(rest)
+    label = name
+    uses_underscore = True
+    if tm:
+        text = tm.group("text") if tm.group("text") is not None else tm.group("text2")
+        uses_underscore = tm.group("text") is not None
+        cm = COLOR_WRAP_RE.match(text)
+        if cm:
+            label = cm.group("pre") + name + cm.group("post")
+    text_lit = f'_("{label}")' if uses_underscore else f'"{label}"'
+    if tm:
+        new_rest = rest[:tm.start()] + text_lit + rest[tm.end():]
+    else:
+        new_rest = " " + text_lit + rest
+    action = f'SetPreference("language", "{lang}")' if m.group("lang2") is not None else f'Language("{lang}")'
+    tail = ref[m.end():]                      # ce qui suit l'action (ex. « at transform », « style … »)
+    if tail.strip().startswith("#") or not tail.strip():
+        tail = ""
+    return f"{m.group('indent')}{m.group('kw')}{new_rest}action {action}{tail}   {MENU_MARK}\n"
+
+
+def add_language_menu(game_root: str, lang: str, name: str | None = None) -> dict:
+    """Ajoute « <Nom> » aux menus de langue du jeu (textbutton … action Language(...) / SetPreference("language", …)).
+    Sources .rpy seulement ; sauvegarde <fichier>.renpyhd.bak ; .rpyc retiré ; fichiers notés dans le manifeste."""
+    game = core.find_game_dir(game_root)
+    name = name or NATIVE_NAMES.get(lang, lang.capitalize())
+    report = {"menus": 0, "files": [], "skipped": [], "message": ""}
+    tl_dir = game / "tl" / lang
+    manifest = _load_manifest(tl_dir)
+    touched = set(manifest.get("menu_files", []))
+    candidates = [p for p in game.rglob("*.rpy") if "tl" not in p.relative_to(game).parts[:1] and not p.name.startswith("zz_renpyhd_")]
+    rpyc_only = not candidates and any(game.rglob("*.rpyc"))
+    for p in sorted(candidates):
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "Language(" not in text and '"language"' not in text:
+            continue
+        lines = text.split("\n")
+        groups = _menu_groups(lines)
+        if not groups:
+            continue
+        inserts: list[tuple[int, str]] = []
+        for g in groups:
+            existing = [i for i in g if re.search(rf'(?:Language|SetPreference\("language",)\(?\s*"{re.escape(lang)}"', lines[i])]
+            if existing:
+                report["skipped"].append(f"{p.name} (déjà présent)")
+                continue
+            ref = lines[g[-1]]
+            inserts.append((g[-1], _build_menu_line(ref, lang, name)))
+        if not inserts:
+            continue
+        for idx, new_line in sorted(inserts, reverse=True):
+            lines.insert(idx + 1, new_line.rstrip("\n"))
+        rel = p.relative_to(game).as_posix()
+        bak = p.with_name(p.name + ".renpyhd.bak")
+        if not bak.exists():
+            shutil.copy2(p, bak)
+        p.write_text("\n".join(lines), encoding="utf-8", newline="")
+        with_suppress_unlink(p.with_suffix(".rpyc"))
+        touched.add(rel)
+        report["files"].append(rel)
+        report["menus"] += len(inserts)
+    if touched:
+        manifest = manifest or {"created_by_renpyhd": True, "language": lang}
+        manifest["menu_files"] = sorted(touched)
+        _save_manifest(tl_dir, manifest)
+    if rpyc_only:
+        report["message"] = "Menu de langue du jeu : impossible (scripts compilés seulement, pas de .rpy) — la langue reste sélectionnée par défaut et par Maj+L."
+    elif report["menus"]:
+        report["message"] = (f"Menu de langue du jeu : « {name} » ajouté dans {report['menus']} menu(s) "
+                             f"({', '.join(report['files'])} ; sauvegarde .renpyhd.bak).")
+    elif report["skipped"]:
+        report["message"] = "Menu de langue du jeu : déjà présent."
+    else:
+        report["message"] = "Aucun menu de langue trouvé dans les scripts du jeu (la langue reste sélectionnée par défaut et par Maj+L)."
+    return report
+
+
+def remove_language_menu(game_root: str, lang: str) -> list[str]:
+    """Restaure les fichiers modifiés par add_language_menu (sauvegardes .renpyhd.bak) et retire leurs .rpyc."""
+    game = core.find_game_dir(game_root)
+    tl_dir = game / "tl" / lang
+    manifest = _load_manifest(tl_dir)
+    done = []
+    for rel in manifest.get("menu_files", []):
+        p = game / rel
+        bak = p.with_name(p.name + ".renpyhd.bak")
+        if bak.is_file():
+            shutil.move(str(bak), str(p))
+            done.append(f"Restauré : {rel}")
+        elif p.is_file():
+            text = p.read_text(encoding="utf-8", errors="replace")
+            kept = [ln for ln in text.split("\n") if not ln.rstrip().endswith(MENU_MARK)]
+            p.write_text("\n".join(kept), encoding="utf-8", newline="")
+            done.append(f"Lignes RenPyHD retirées : {rel}")
+        with_suppress_unlink(p.with_suffix(".rpyc"))
+    if manifest.get("menu_files"):
+        manifest["menu_files"] = []
+        _save_manifest(tl_dir, manifest)
+    return done
+
+
+def install_language_hook(game_root: str, lang: str, add_menu: bool = True) -> Path:
     game = core.find_game_dir(game_root)
     target = game / LANG_HOOK
     target.write_text(LANG_HOOK_SRC % {"lang": lang}, encoding="utf-8")
     with_suppress_unlink(target.with_suffix(".rpyc"))
+    LAST_INSTALL_REPORT.clear()
+    if add_menu:
+        try:
+            LAST_INSTALL_REPORT.update(add_language_menu(game_root, lang))
+        except Exception as exc:
+            LAST_INSTALL_REPORT.update({"menus": 0, "files": [], "message": f"Menu de langue du jeu : échec ({exc})."})
     return target
 
 
@@ -2024,6 +2204,10 @@ def check_translation(game_root: str, lang: str, log: Callable[[str], None], can
 def uninstall_translation(game_root: str, lang: str, remove_tl: bool = True) -> list[str]:
     game = core.find_game_dir(game_root)
     done = []
+    try:
+        done.extend(remove_language_menu(game_root, lang))
+    except Exception as exc:
+        done.append(f"Menu de langue : restauration impossible ({exc})")
     for n in (LANG_HOOK, LANG_HOOK + "c", TL_HELPER, TL_HELPER + "c", TL_CHECK, TL_CHECK + "c"):
         f = game / n
         if f.exists():
