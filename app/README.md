@@ -220,6 +220,14 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    « Vérifier (lancement sur PC) » (`verify_build`, sonde `renpyhd_verify_probe.rpy` copiée dans la copie sous le nom
    `zz_renpyhd_verify.rpy`) : lance `renpy.py <copie>` avec le SDK de la construction et `RENPYHD_EXTDATA` vers le pack,
    contrôle label `start` + images témoins + menu principal rendu (délai 300 s), résultat dans `build.json` (`verified`).
+   **ABI et téléphone** : `adb_device_info` (modèle, Android, `ro.product.cpu.abilist`), `pick_apk_for_device` (universel,
+   sinon arm64-v8a > armeabi-v7a > x86_64 > x86, sinon refus expliqué), `adb_launch` (`monkey -p <paquet> … LAUNCHER 1`).
+   **Route arm64 des jeux 7.0–7.3** (`BuildConfig.arm64_legacy`, SDK `ARM64_LEGACY_SDK` = 7.8.7) : le RAPT 7.0–7.2 ne
+   produit que armeabi-v7a + x86_64 ; `decompile_all` (unrpyc 1.3.2 avec le Python 2 du SDK 7.8.7, tous les `.rpyc` sans
+   `.rpy`, puis suppression des `.rpyc`), `compile_and_fix` (`renpy.py <copie> compile`, erreurs `File "…", line N:`
+   corrigées par `fix_script_line` — motifs `empty_block` (deux-points final d'un `with x:` sans bloc), `bad_indent` —
+   jusqu'à 5 passes) puis `build_apk` 7.8.7. Vérifié sur Melody (7.1.0) : 23 décompilés, 0 correction, APK universel
+   arm64 en 66 s, lancement PC et Galaxy Z Fold 6 (arm64-v8a seulement) OK.
 3. **Configurer** — `.android.json` (clés RAPT : `package`, `name`, `icon_name`, `version`, `numeric_version`, `orientation`,
    `permissions`, `include_pil`, `include_sqlite`, `layout`, `source`, `expansion`, `google_play_key`, `google_play_salt`,
    `store`, `update_icons`, `update_always` + `heap_size`, `update_keystores` pour 7.4+/8.x), icônes

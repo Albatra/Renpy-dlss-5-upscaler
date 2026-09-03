@@ -128,6 +128,13 @@ tournent tels quels (vérifié par un vrai lancement avec Ren'Py 7.3.5 ; un SDK 
 (lancement sur PC)* dans *Mes APK* lance n'importe quelle copie de construction avec son SDK et contrôle le label `start`,
 le menu principal et le pack de données. Pas de clé Google Play.
 
+**Téléphones et ABI** : *Rechercher les appareils* affiche le modèle, la version d'Android et les ABI acceptées ;
+l'installation choisit l'APK universel ou celui qui correspond à l'appareil (arm64-v8a > armeabi-v7a > x86_64) et refuse
+clairement sinon. Les téléphones 64 bits seulement (Galaxy Z Fold 6, Pixel 7+…) exigent l'arm64-v8a, que le RAPT d'origine
+des jeux Ren'Py 7.0–7.2 ne produit pas : cochez *Construire pour arm64* — les `.rpyc` sont décompilés par unrpyc,
+recompilés et empaquetés par le SDK 7.8.7 (vérifié sur Melody / Ren'Py 7.1.0, installé et lancé sur un Galaxy Z Fold 6).
+Puis *Lancer sur le téléphone*.
+
 **Gros jeux (sans réduire les images)** : un APK doit rester sous ≈ 2 Go (4 Go absolus, format ZIP). À l'étape 3, *Données
 du jeu : séparées* construit un **APK léger** (moteur, scripts, interface, polices, audio : quelques dizaines de Mo) et un
 **pack de données** `android\out\<jeu>\<paquet>-data\game\` avec **toutes les images et vidéos, sans réduction** (liens

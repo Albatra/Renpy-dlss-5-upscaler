@@ -1731,7 +1731,7 @@ _ANDROID: dict[str, object] = {"analysis": None, "sdk": None, "jdk": None, "buil
 ORIENTATION_LABELS = {t(f"android.orientation.{k}"): k for k in android.ORIENTATIONS}
 STEP_A1_HINT = t("android.step1_hint")
 A_CFG_KEYS = ("name", "icon_name", "package", "version", "numeric", "orientation", "internet", "videos", "budget", "icon", "bundle", "decompile",
-              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "estimate")
+              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "arm64", "estimate")
 DATA_MODE_LABELS = {t("android.data.apk"): "apk", t("android.data.external"): "external"}
 CACHE_KIND_LABELS = {k: t(f"android.cache.kind.{k}") for k in ("sdk", "jdk", "gradle", "unrpyc", "downloads", "build")}
 
@@ -1798,6 +1798,7 @@ def _a_cfg_updates(a: android.AndroidAnalysis, sdk_version: str) -> list:
         gr.update(value=cfg.prefer_rpyc, visible=a.rpyc_count > 0),
         {v: k for k, v in DATA_MODE_LABELS.items()}[cfg.data_mode],
         gr.update(value=cfg.ext_audio, label=t("android.cfg.ext_audio", n=a.audio_count, size=core.human_size(a.audio_bytes)), visible=a.audio_count > 0),
+        gr.update(value=a.family == "legacy", label=t("android.cfg.arm64", sdk=android.ARM64_LEGACY_SDK), visible=a.family == "legacy"),
         _a_estimate_md(a, False, 0, True, cfg.data_mode, cfg.ext_audio),
     ]
 
@@ -1829,6 +1830,7 @@ def android_analyze(game_root: str):
         # RAPT 7.0–7.3 patché par RenPyHD (dépendance d'expansion Google Play retirée) : le SDK exact construit et démarre
         # (vérifié 7.3.5) ; les .rpyc du jeu sont compatibles, contrairement à une recompilation par un SDK 7.4+.
         lines.append(t("android.an.legacy_warn", version=a.version, sdk=sdk_version))
+        lines.append(t("android.an.legacy_abi", sdk=android.ARM64_LEGACY_SDK))
     lines.append(t("android.an.summary", version=a.version, sdk=sdk_version, reason=t(f"android.reason.{reason}")))
     if not a.online:
         lines.append(t("android.an.offline"))
@@ -1919,12 +1921,13 @@ def android_prepare(game_root: str, sdk_choice: str, manual_sdk: str, org: str, 
 def _a_config_from(v: list) -> android.BuildConfig:
     cfg = android.BuildConfig()
     (name, icon_name, package, version, numeric, orientation_label, internet, videos, budget, icon, bundle, decompile, skip_rpa, prefer_rpyc,
-     data_mode, ext_audio, _estimate) = v
+     data_mode, ext_audio, arm64, _estimate) = v
     cfg.name, cfg.icon_name, cfg.package, cfg.version = str(name).strip(), str(icon_name).strip(), str(package).strip(), str(version).strip()
     cfg.numeric_version = int(numeric or 0)
     cfg.orientation = ORIENTATION_LABELS.get(orientation_label, "sensorLandscape")
     cfg.data_mode = DATA_MODE_LABELS.get(data_mode, "apk")
     cfg.ext_audio = bool(ext_audio)
+    cfg.arm64_legacy = bool(arm64)
     cfg.image_budget_mb = int(budget or 0)
     cfg.icon_path = _clean_path(icon)
     cfg.internet, cfg.include_videos, cfg.bundle = bool(internet), bool(videos), bool(bundle)
@@ -1952,11 +1955,28 @@ def android_build(*v):
         return
     _ANDROID["cfg"] = cfg
     stage_info: dict[str, object] = {}
+    arm64 = bool(cfg.arm64_legacy) and a.family == "legacy"
+    if arm64:
+        # route arm64 des jeux 7.0–7.3 : SDK 7.8.7 (Python 2, arm64-v8a) + décompilation unrpyc + recompilation
+        st787 = android.env_status(android.ARM64_LEGACY_SDK)
+        if not st787.get("ready") or st787.get("jdk") is None or not st787.get("unrpyc"):
+            yield t("android.need_sdk_arm64", version=android.ARM64_LEGACY_SDK), "", "", hidden, ""
+            return
+        sdk, jdk = st787["sdk"], st787["jdk"]
+        cfg.prefer_rpyc = False
 
     def work(log, prog, cancel):
         st = android.stage_build(a, cfg, sdk, log, prog, cancel)
         stage_info["stage"] = st
-        if cfg.decompile and a.rpy_missing:
+        if arm64:
+            log(t("android.decompiling"))
+            ok, errors, removed = android.decompile_all(sdk, st.build_dir, log, cancel)
+            stage_info["decompile"] = (ok, errors)
+            comp = android.compile_and_fix(sdk, st.build_dir, log, cancel)
+            stage_info["compile"] = comp
+            if not comp.get("ok"):
+                raise RuntimeError(t("android.err.compile", errors="  \n".join(comp.get("errors", [])[:6])))
+        elif cfg.decompile and a.rpy_missing:
             log(t("android.decompiling"))
             stage_info["decompile"] = android.decompile_missing(sdk, st.build_dir, a.rpy_missing, log, cancel)
         return android.build_apk(sdk, jdk, st.build_dir, cfg, log, prog, cancel)
@@ -2006,6 +2026,10 @@ def android_build(*v):
     if "decompile" in stage_info:
         ok, errors = stage_info["decompile"]  # type: ignore[misc]
         md += "  \n" + t("android.decompile_result", ok=ok, errors=len(errors))
+    if "compile" in stage_info:
+        comp: dict = stage_info["compile"]  # type: ignore[assignment]
+        md += "  \n" + t("android.arm64_result", sdk=sdk.version, rounds=comp.get("rounds", 0), fixes=len(comp.get("fixes", [])),
+                         patterns=", ".join(sorted({f"{fn}:{ln} ({p})" for fn, ln, p in comp.get("fixes", [])})) or "—")
     ver: dict | None = None
     if main:
         try:
@@ -2131,14 +2155,18 @@ def android_mgr_install(choice: str):
     if _tools_busy():
         yield t("tools.busy")
         return
-    devs = android.adb_devices(sdk)
-    if not devs:
+    info = android.adb_device_info(sdk)
+    if not info:
         yield t("android.no_device")
         return
-    apk, pack, pkg = e.apk, e.pack_dir, str(e.data.get("package") or "")
+    devs = [info["serial"]]
+    pack, pkg = e.pack_dir, str(e.data.get("package") or "")
+    files = [e.out_dir / f for f in (e.data.get("files") or [])] or ([e.apk] if e.apk else [])
+    apk, msg = _pick_for_device(files, info, e.data.get("sdk_family") == "legacy")
     if apk is None:
-        yield t("android.mgr.no_apk", name=e.name)
+        yield _device_md(info) + "  \n" + (msg or t("android.mgr.no_apk", name=e.name))
         return
+    yield _device_md(info) + "  \n" + t("android.install_picked", apk=apk.name, abi=android.apk_abi(apk))
 
     def work(log, prog, cancel):
         rc, out = android.adb_install(sdk, apk, log, cancel)
@@ -2270,24 +2298,77 @@ def android_open_keys():
     return gr.update()
 
 
-def android_devices():
+def _device_md(info: dict | None) -> str:
+    if not info:
+        return t("android.no_device")
+    return t("android.device_info", model=info.get("model", "?"), android=info.get("android", "?"), sdk=info.get("sdk_int", "?"),
+             abis=", ".join(info.get("abis") or []) or "?", serial=info.get("serial", "?"))
+
+
+def _sdk_for_adb() -> android.SdkInfo | None:
     sdk = _ANDROID.get("sdk")
-    if not isinstance(sdk, android.SdkInfo):
+    return sdk if isinstance(sdk, android.SdkInfo) and sdk.adb.is_file() else android.sdk_with_adb()
+
+
+def android_devices():
+    sdk = _sdk_for_adb()
+    if sdk is None:
         return t("android.need_env")
-    devs = android.adb_devices(sdk)
-    return t("android.devices", list=", ".join(devs)) if devs else t("android.no_device")
+    return _device_md(android.adb_device_info(sdk))
+
+
+def _pick_for_device(files: list, info: dict, legacy: bool) -> tuple:
+    """(apk, message d'erreur) : APK compatible avec l'appareil, sinon explication (ABI acceptées / présentes, route arm64)."""
+    apk, abi = android.pick_apk_for_device(files, info.get("abis") or [])
+    if apk is not None:
+        return apk, ""
+    msg = t("android.install_no_abi", model=info.get("model", "?"), device_abis=", ".join(info.get("abis") or []) or "?", build_abis=abi)
+    if legacy:
+        msg += " " + t("android.install_no_abi_legacy", sdk=android.ARM64_LEGACY_SDK)
+    return None, msg
 
 
 def android_install():
-    sdk, r = _ANDROID.get("sdk"), _ANDROID.get("build")
-    if not isinstance(sdk, android.SdkInfo) or not isinstance(r, android.BuildResult) or not r.files:
+    sdk, r, cfg = _sdk_for_adb(), _ANDROID.get("build"), _ANDROID.get("cfg")
+    if sdk is None or not isinstance(r, android.BuildResult) or not r.files:
         return t("android.need_env")
-    devs = android.adb_devices(sdk)
-    main = android.pick_main_apk(r.files)
-    if not devs or main is None or main.suffix.lower() != ".apk":
+    info = android.adb_device_info(sdk)
+    if not info:
         return t("android.no_device")
-    rc, out = android.adb_install(sdk, main, lambda _m: None)
-    return t("android.install_done", device=devs[0]) if rc == 0 else t("android.install_failed", rc=rc, out=out[-400:])
+    a = _ANDROID.get("analysis")
+    legacy = isinstance(a, android.AndroidAnalysis) and a.family == "legacy" and not (isinstance(cfg, android.BuildConfig) and cfg.arm64_legacy)
+    apk, msg = _pick_for_device(r.files, info, legacy)
+    if apk is None:
+        return _device_md(info) + "  \n" + msg
+    rc, out = android.adb_install(sdk, apk, lambda _m: None)
+    if rc != 0:
+        return _device_md(info) + "  \n" + t("android.install_failed", rc=rc, out=out[-400:])
+    return _device_md(info) + "  \n" + t("android.install_done", device=info.get("model", info.get("serial", "?"))) + " " + t("android.install_picked", apk=apk.name, abi=android.apk_abi(apk))
+
+
+def android_launch():
+    sdk, cfg = _sdk_for_adb(), _ANDROID.get("cfg")
+    if sdk is None or not isinstance(cfg, android.BuildConfig):
+        return t("android.need_env")
+    if not android.adb_devices(sdk):
+        return t("android.no_device")
+    pkg = cfg.package.strip().lower()
+    rc, out = android.adb_launch(sdk, pkg, lambda _m: None)
+    return t("android.launch_done", pkg=pkg) if rc == 0 else t("android.launch_failed", out=out[-300:])
+
+
+def android_mgr_launch(choice: str):
+    e = _mgr_pick(choice)
+    if e is None:
+        return t("android.mgr.pick_one")
+    sdk = _sdk_for_adb()
+    if sdk is None:
+        return t("android.mgr.no_adb")
+    if not android.adb_devices(sdk):
+        return t("android.no_device")
+    pkg = str(e.data.get("package") or "")
+    rc, out = android.adb_launch(sdk, pkg, lambda _m: None)
+    return t("android.launch_done", pkg=pkg) if rc == 0 else t("android.launch_failed", out=out[-300:])
 
 
 def android_icon_browse(current: str):
@@ -2772,6 +2853,7 @@ def build_ui() -> gr.Blocks:
                                 a_prefer_rpyc = gr.Checkbox(False, label=t("android.cfg.prefer_rpyc"), visible=False)
                                 a_decompile = gr.Checkbox(False, label=t("android.cfg.decompile"), visible=False)
                                 a_bundle = gr.Checkbox(False, label=t("android.cfg.bundle"), visible=android.ANDROID_BUNDLE_ENABLED)
+                                a_arm64 = gr.Checkbox(False, label=t("android.cfg.arm64", sdk=android.ARM64_LEGACY_SDK), visible=False)
                                 a_estimate = gr.Markdown("", elem_classes=["rhd-hint"])
                         with gr.Column(elem_classes=["rhd-step"]):
                             gr.HTML(_step_title(4, t("android.step4_title")))
@@ -2785,6 +2867,7 @@ def build_ui() -> gr.Blocks:
                                     with gr.Row():
                                         a_open_out = gr.Button(t("android.open_folder"), min_width=200)
                                         a_install = gr.Button(t("android.install_adb"), min_width=260, visible=android.ANDROID_ADB_ENABLED)
+                                        a_launch = gr.Button(t("android.launch_adb"), min_width=220, visible=android.ANDROID_ADB_ENABLED)
                                         a_push = gr.Button(t("android.push_adb"), min_width=300, visible=android.ANDROID_ADB_ENABLED)
                                         a_devices = gr.Button(t("android.refresh_devices"), size="sm", min_width=200, visible=android.ANDROID_ADB_ENABLED)
                                     a_device_md = gr.Markdown("")
@@ -2809,6 +2892,7 @@ def build_ui() -> gr.Blocks:
                                 m_open = gr.Button(t("android.open_folder"), min_width=180)
                                 m_verify = gr.Button(t("android.mgr.verify"), min_width=220)
                                 m_install = gr.Button(t("android.mgr.install"), min_width=260, visible=android.ANDROID_ADB_ENABLED)
+                                m_launch = gr.Button(t("android.launch_adb"), min_width=220, visible=android.ANDROID_ADB_ENABLED)
                                 m_uninstall = gr.Button(t("android.mgr.uninstall"), min_width=220, visible=android.ANDROID_ADB_ENABLED)
                                 m_delete = gr.Button(t("android.mgr.delete"), variant="stop", min_width=180)
                                 m_confirm = gr.Checkbox(False, label=t("android.mgr.confirm"), scale=0, min_width=260)
@@ -2969,7 +3053,7 @@ def build_ui() -> gr.Blocks:
         t_target.change(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
         # ouverture directe d'un onglet / d'un jeu par l'URL (?tab=tab_tools&sub=sub_rpa&game=…)
         a_cfg_fields = [a_name, a_icon_name, a_package, a_version, a_numeric, a_orientation, a_internet, a_videos, a_budget, a_icon, a_bundle,
-                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_estimate]
+                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_arm64, a_estimate]
         a_analyze_outputs = [a_summary, a_step2, a_step2_hint, a_sdk, a_env_md, a_step3, a_step3_hint, a_step4, a_step4_hint] + a_cfg_fields
         demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root, a_root], queue=False).then(
             rpa_scan, x_root, x_scan_outputs, queue=False).then(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False).then(
@@ -3017,6 +3101,8 @@ def build_ui() -> gr.Blocks:
         a_devices.click(android_devices, None, a_device_md)
         a_install.click(android_install, None, a_device_md, concurrency_limit=1)
         a_push.click(android_push, None, a_push_md, concurrency_limit=1, show_progress="minimal")
+        a_launch.click(android_launch, None, a_device_md, concurrency_limit=1)
+        m_launch.click(android_mgr_launch, m_pick, m_status, concurrency_limit=1)
         # ---- Mes APK
         demo.load(android_mgr_refresh, None, [m_table, m_pick, m_summary], queue=False).then(android_cache_refresh, None, [c_table, c_pick, c_summary], queue=False)
         m_refresh.click(lambda: android_mgr_refresh(True), None, [m_table, m_pick, m_summary])

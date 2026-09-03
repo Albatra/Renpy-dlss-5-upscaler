@@ -66,6 +66,11 @@ setup.bat
   dependency lived on the closed bintray repository) and builds with the exact SDK, so the game's compiled scripts run
   as-is (verified by a real launch with Ren'Py 7.3.5). *Verify (launch on PC)* in *My APKs* starts any build copy with its
   SDK and checks the `start` label, the main menu and the data pack. HD 2x images and DLSS backups are never included.
+  **Phones and ABIs**: *Search devices* shows the model, Android version and accepted ABIs; install picks the universal
+  APK or the one matching the device (arm64-v8a > armeabi-v7a > x86_64) and refuses clearly otherwise. 64-bit-only
+  phones (Galaxy Z Fold 6, Pixel 7+…) need arm64-v8a, which the original RAPT of Ren'Py 7.0–7.2 games cannot produce:
+  tick *Build for arm64* — the `.rpyc` are decompiled with unrpyc, recompiled and packaged by the 7.8.7 SDK (verified on
+  Melody / Ren'Py 7.1.0, installed and launched on a Galaxy Z Fold 6). Then *Launch on the phone*.
   **Big games**: an APK must stay under ≈ 2 GB (4 GB absolute). With *separate data* the APK only holds the engine, the
   scripts, the interface and the audio (a few dozen MB) and **all images and videos, at full size**, go into a data pack
   that is copied to `Android/data/<package>/files/game/` on the phone (adb button, or USB from Windows) — the folder the

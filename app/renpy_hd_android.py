@@ -855,6 +855,10 @@ class BuildConfig:
     data_mode: str = "apk"           # apk : tout dans l'APK (limite ≈ 2 Go) ; external : APK léger + pack de données (images, vidéos, gros audio)
     ext_audio: bool = False          # external : l'audio va aussi dans le pack
     link_pack: bool = True           # external : liens physiques NTFS vers les fichiers du jeu quand le pack est sur le même disque (instantané, 0 octet)
+    arm64_legacy: bool = False       # jeu Ren'Py 7.0–7.3 : décompiler (unrpyc) et construire avec le SDK ARM64_LEGACY_SDK (arm64-v8a) au lieu du RAPT d'origine
+
+
+ARM64_LEGACY_SDK = "7.8.7"           # dernier Ren'Py 7 (Python 2) : produit arm64-v8a + armeabi-v7a + x86_64 ; recompile les .rpy décompilés
 
 
 def slug(name: str) -> str:
@@ -1264,6 +1268,107 @@ def decompile_missing(sdk: SdkInfo, build_dir: Path, missing: list[str], log: Ca
     return ok, errors
 
 
+def decompile_all(sdk: SdkInfo, build_dir: Path, log: Callable[[str], None], cancel: threading.Event) -> tuple[int, list[str], int]:
+    """Route arm64 des jeux 7.0–7.3 : décompile tous les .rpyc sans .rpy de la copie (unrpyc 1.x, Python 2 du SDK), puis supprime
+    tous les .rpyc pour que le SDK recompile les sources. Renvoie (décompilés, échecs, .rpyc supprimés)."""
+    game = build_dir / "game"
+    missing = []
+    for f in game.rglob("*.rpyc"):
+        rel = f.relative_to(game).as_posix()
+        if not f.with_suffix(".rpy").is_file() and not rel.startswith("tl/"):
+            missing.append(rel)
+    ok, errors = decompile_missing(sdk, build_dir, sorted(missing), log, cancel) if missing else (0, [])
+    removed = 0
+    for f in list(game.rglob("*.rpyc")):
+        if f.with_suffix(".rpy").is_file():
+            f.unlink()
+            removed += 1
+    log(T("android.log.rpyc_removed", n=removed))
+    return ok, errors, removed
+
+
+_COMPILE_ERR_RE = re.compile(r'^File "([^"]+)", line (\d+): (.*)$')
+
+
+def fix_script_line(lines: list[str], idx: int, message: str) -> str:
+    """Corrige, quand c'est un motif connu, la ligne `idx` (0-based) d'un script décompilé refusé par un Ren'Py plus récent.
+    Renvoie le nom du motif appliqué, ou "" si rien n'a été changé. Motifs :
+      empty_block : « expected a non-empty block » — `with dissolve:` / `show x:` etc. sans corps : le deux-points final est retiré ;
+      trailing_colon_stmt : instruction suivie d'un deux-points mais d'aucun bloc (même correction, autre message) ;
+      bad_indent : « indentation mismatch » sur une ligne vide ou faite d'espaces : la ligne est vidée."""
+    if idx < 0 or idx >= len(lines):
+        return ""
+    line = lines[idx]
+    low = message.lower()
+    if "expected a non-empty block" in low or "expected statement" in low and line.rstrip().endswith(":"):
+        stripped = line.rstrip()
+        if stripped.endswith(":") and not stripped.lstrip().startswith(("if ", "elif ", "else", "while ", "for ", "menu", "label ", "screen ", "init", "python", "translate ", "layeredimage", "style ", "transform ", "define ", "default ")):
+            lines[idx] = stripped[:-1] + line[len(stripped):]
+            return "empty_block"
+    if "indentation mismatch" in low and not line.strip():
+        lines[idx] = ""
+        return "bad_indent"
+    return ""
+
+
+def compile_and_fix(sdk: SdkInfo, build_dir: Path, log: Callable[[str], None], cancel: threading.Event, rounds: int = 5) -> dict:
+    """`renpy.py <copie> compile` avec le SDK cible ; à chaque erreur de syntaxe connue, corrige la ligne (fix_script_line) et
+    recommence (au plus `rounds` fois). Renvoie {ok, rounds, fixes:[(fichier, ligne, motif)], errors:[messages restants]}."""
+    res: dict = {"ok": False, "rounds": 0, "fixes": [], "errors": []}
+    if sdk.python is None:
+        res["errors"].append(T("android.err.no_sdk_python", root=sdk.root))
+        return res
+    env = launcher_env(None)
+    for r in range(rounds):
+        if cancel.is_set():
+            raise Cancelled()
+        res["rounds"] = r + 1
+        err_file = build_dir / "errors.txt"
+        if err_file.is_file():
+            err_file.unlink()
+        cmd = [str(sdk.python), "-EO", "renpy.py", str(build_dir), "compile"]
+        log("$ " + " ".join(cmd))
+        proc = subprocess.run(cmd, cwd=str(sdk.root), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              creationflags=NO_WINDOW, env=env, timeout=1800)
+        text = (proc.stdout or "") + (proc.stderr or "")
+        if err_file.is_file():
+            text += "\n" + err_file.read_text(encoding="utf-8", errors="replace")
+        errors = []
+        for ln in text.splitlines():
+            m = _COMPILE_ERR_RE.match(ln.strip())
+            if m:
+                errors.append((m.group(1), int(m.group(2)), m.group(3).strip()))
+        if proc.returncode == 0 and not errors:
+            res["ok"] = True
+            log(T("android.log.compile_ok", round=r + 1))
+            return res
+        fixed_any = False
+        seen = set()
+        for fn, lineno, msg in errors:
+            key = (fn, lineno)
+            if key in seen:
+                continue
+            seen.add(key)
+            path = build_dir / fn if not Path(fn).is_absolute() else Path(fn)
+            if not path.is_file():
+                continue
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines(True)
+            pattern = fix_script_line(lines, lineno - 1, msg)
+            if pattern:
+                path.write_text("".join(lines), encoding="utf-8")
+                res["fixes"].append((fn, lineno, pattern))
+                log(T("android.log.fix_applied", file=fn, line=lineno, pattern=pattern))
+                fixed_any = True
+        if not fixed_any:
+            res["errors"] = [f"{fn}:{lineno}: {msg}" for fn, lineno, msg in errors] or [ln for ln in text.splitlines() if "Error" in ln or "error" in ln][-5:] or [f"rc={proc.returncode}"]
+            log(T("android.log.compile_failed", n=len(res["errors"])))
+            for e in res["errors"][:8]:
+                log("  " + e)
+            return res
+    res["errors"] = [T("android.log.compile_rounds", n=rounds)]
+    return res
+
+
 # ----------------------------------------------------------------------------
 # Étape 4 : construction
 # ----------------------------------------------------------------------------
@@ -1394,6 +1499,73 @@ def pick_main_apk(files: list[Path]) -> Path | None:
             return f
     apks = [f for f in files if f.suffix.lower() == ".apk"]
     return apks[0] if apks else (files[0] if files else None)
+
+
+ABI_ORDER = ("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+_ABI_NAME_RE = re.compile(r"-(universal|arm64-v8a|armeabi-v7a|x86_64|x86)-release\.apk$", re.I)
+
+
+def apk_abi(apk: Path) -> str:
+    """ABI d'un APK : d'après son nom RAPT (…-<abi>-release.apk), sinon d'après lib/<abi>/ dans le ZIP ; « universal » si plusieurs."""
+    m = _ABI_NAME_RE.search(apk.name)
+    if m:
+        return m.group(1).lower()
+    try:
+        with zipfile.ZipFile(apk) as z:
+            libs = sorted({n.split("/")[1] for n in z.namelist() if n.startswith("lib/") and n.count("/") >= 2})
+    except Exception:
+        return "?"
+    if len(libs) > 1:
+        return "universal"
+    return libs[0] if libs else "?"
+
+
+def pick_apk_for_device(files: list[Path], abis: list[str]) -> tuple[Path | None, str]:
+    """APK installable sur un appareil acceptant `abis` (ro.product.cpu.abilist) : universel d'abord, sinon l'APK dont l'ABI est
+    acceptée dans l'ordre arm64-v8a > armeabi-v7a > x86_64 > x86. (None, liste des ABI de la construction) si rien ne convient."""
+    apks = [f for f in files if f.suffix.lower() == ".apk" and f.is_file()]
+    by_abi = {apk_abi(f): f for f in apks}
+    if "universal" in by_abi:
+        return by_abi["universal"], "universal"
+    wanted = [a.strip().lower() for a in abis if a.strip()]
+    for abi in ABI_ORDER:
+        if abi in wanted and abi in by_abi:
+            return by_abi[abi], abi
+    return None, ", ".join(sorted(by_abi)) or "—"
+
+
+def adb_device_info(sdk: SdkInfo) -> dict | None:
+    """Premier appareil branché : {serial, model, android, sdk_int, abis} ; None sans appareil (débranché à tout moment : tolérant)."""
+    devs = adb_devices(sdk)
+    if not devs:
+        return None
+    info: dict = {"serial": devs[0], "model": "?", "android": "?", "sdk_int": "?", "abis": []}
+    props = {"model": "ro.product.model", "android": "ro.build.version.release", "sdk_int": "ro.build.version.sdk", "abis": "ro.product.cpu.abilist"}
+    for key, prop in props.items():
+        try:
+            proc = subprocess.run([str(sdk.adb), "-s", devs[0], "shell", "getprop", prop], capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", creationflags=NO_WINDOW, timeout=30)
+            val = proc.stdout.strip()
+        except Exception:
+            val = ""
+        if key == "abis":
+            info["abis"] = [a for a in val.split(",") if a]
+        elif val:
+            info[key] = val
+    return info
+
+
+def adb_launch(sdk: SdkInfo, package: str, log: Callable[[str], None]) -> tuple[int, str]:
+    """Lance l'application installée (monkey : activité LAUNCHER du paquet)."""
+    cmd = [str(sdk.adb), "shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"]
+    log("$ " + " ".join(cmd))
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=120)
+    except Exception as exc:
+        return 1, str(exc)
+    out = (proc.stdout + proc.stderr).strip()
+    ok = proc.returncode == 0 and "Events injected: 1" in out
+    return (0 if ok else (proc.returncode or 1)), out
 
 
 # ----------------------------------------------------------------------------

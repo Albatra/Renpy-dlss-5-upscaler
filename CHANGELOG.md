@@ -45,6 +45,16 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   `rapt\prototype`, adds `mavenCentral()` and marks `build.txt`; the exact SDK is then used (an SDK 7.4+ cannot start
   7.3 `.rpyc`: "could not find label 'start'"). Verified with A Mother's Love (Ren'Py 7.3.5): universal + per-ABI APKs in
   121 s, desktop launch OK.
+- **ABI-aware install**: *Search devices* reads model / Android version / `ro.product.cpu.abilist`; install picks the
+  universal APK, else the split APK whose ABI the device accepts (arm64-v8a > armeabi-v7a > x86_64 > x86), and refuses
+  with a clear message otherwise (no more `INSTALL_FAILED_NO_MATCHING_ABIS` from a blind x86_64 pick). New *Launch on the
+  phone* button (`adb shell monkey`), install order APK → data pack → launch, in the build step and in *My APKs*.
+- **arm64 for Ren'Py 7.0–7.3 games** (*Build for arm64*, step 3): RAPT 7.0–7.2 only produces armeabi-v7a + x86_64 APKs,
+  which 64-bit-only phones refuse. The new route decompiles the `.rpyc` with unrpyc 1.x (Python 2 of the 7.8.7 SDK),
+  drops the `.rpyc`, runs `renpy.py <copy> compile` with an automatic fix pass (`fix_script_line`: empty `with x:` blocks,
+  stray indentation) and builds with the 7.8.7 SDK → universal arm64-v8a + armeabi-v7a + x86_64 APK. Verified on Melody
+  (Ren'Py 7.1.0): 23 `.rpyc` decompiled, no fix needed, APK in 66 s, desktop launch OK, then installed and launched on a
+  Samsung Galaxy Z Fold 6 (Android 16, arm64-v8a only) with the 6 GB data pack pushed over adb.
 - **Verify (launch on PC)** in *My APKs*: runs the build copy with the SDK of the build (`RENPYHD_EXTDATA` pointing to
   the data pack when relevant) and a probe (`renpyhd_verify_probe.rpy`) that checks the `start` label, the probe images
   and the rendered main menu within a timeout; result stored in `build.json` and shown in the table.
