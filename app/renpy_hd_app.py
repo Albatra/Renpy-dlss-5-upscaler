@@ -1699,8 +1699,7 @@ def tl_install(game_root: str, target_label: str):
         msg = t("tl.installed", file=target.name, lang=lang, done=done, total=total)
         menu_msg = getattr(tools, "LAST_INSTALL_REPORT", {}).get("message")
         if menu_msg:
-            msg += "  
-" + menu_msg
+            msg += "  \n" + menu_msg
         if left:
             msg += "  \n" + t("tl.installed_left", n=left)
         return msg, tl_status_md(root, target_label)
