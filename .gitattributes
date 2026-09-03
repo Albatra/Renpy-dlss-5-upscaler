@@ -4,3 +4,7 @@
 *.rpy text eol=lf
 *.png binary
 *.exe binary
+*.jpg binary
+*.ico binary
+*.json text eol=lf
+*.py text eol=lf

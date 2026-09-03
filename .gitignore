@@ -1,0 +1,26 @@
+# DLSS 5 Visual Enhancer (downloaded by setup.bat, ~467 MB zip / ~1.2 GB extracted)
+DLSS5/
+DLSS5.zip
+DLSS5.zip.part
+
+# Runtime data
+app/preview/
+app/__pycache__/
+app/data/
+app/renpy_hd_config.json
+app/video_probe_cache.json
+*.log
+
+# Optional third-party extractor (GPL, not redistributed)
+tools/rpaExtract.exe
+
+# Built artefacts
+RenPyHD.exe
+launcher/RenPyHD.exe
+release/
+
+# OS / editors
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
