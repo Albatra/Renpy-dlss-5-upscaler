@@ -644,13 +644,17 @@ def install_adapter(sdk: SdkInfo) -> None:
     sdk.adapter_ok = True
 
 
-LEGACY_PATCH_MARK = "RenPyHD-legacy-patch-1"
+LEGACY_PATCH_MARK = "RenPyHD-legacy-patch-2"
 
 
 def patch_legacy_rapt(sdk: SdkInfo, log: Callable[[str], None]) -> bool:
-    r"""RAPT 7.0–7.3 : son prototype Gradle dépend de com.danikula.expansion (dépôt bintray fermé en 2021) uniquement pour
-    l'expansion Google Play (jamais utilisée par RenPyHD). Retire ces dépendances et les classes Downloader*, ajoute
-    mavenCentral(), marque prototype\build.txt et supprime rapt\project pour forcer la recopie. Idempotent ; True si patché."""
+    r"""RAPT 7.0–7.3 : le projet Gradle dépend de com.danikula.expansion (dépôt bintray fermé en 2021) uniquement pour
+    l'expansion Google Play (jamais utilisée par RenPyHD). Selon la version, la dépendance est dans
+    prototype
+enpyandroiduild.gradle (7.3) ou dans templatespp-build.gradle (7.0–7.2, rendu dans projectpp à chaque
+    build). On retire ces lignes de tous les .gradle (prototype, templates, project), les dépôts bintray/jcenter, on ajoute
+    mavenCentral(), on supprime les classes Downloader* et on marque prototypeuild.txt pour que RAPT recopie le prototype.
+    Idempotent ; True si patché."""
     proto = sdk.rapt / "prototype"
     root_gradle = proto / "build.gradle"
     if sdk.family != "legacy" or not root_gradle.is_file():
@@ -659,25 +663,34 @@ def patch_legacy_rapt(sdk: SdkInfo, log: Callable[[str], None]) -> bool:
     stamp = bt.read_text(encoding="utf-8", errors="ignore") if bt.is_file() else ""
     if LEGACY_PATCH_MARK in stamp:
         return True
-    s = root_gradle.read_text(encoding="utf-8", errors="ignore")
-    s = re.sub(r"\n[ \t]*maven \{ url 'https://dl\.bintray\.com[^\n]*\}[ \t]*\n", "\n", s)
-    if "mavenCentral()" not in s:
-        s = s.replace("google()", "google()\n        mavenCentral()")
-    root_gradle.write_text(s, encoding="utf-8")
-    lib_gradle = proto / "renpyandroid" / "build.gradle"
-    if lib_gradle.is_file():
-        lines = [ln for ln in lib_gradle.read_text(encoding="utf-8", errors="ignore").splitlines(True) if "com.danikula" not in ln]
-        lib_gradle.write_text("".join(lines), encoding="utf-8")
-    java_dir = proto / "renpyandroid" / "src" / "main" / "java" / "org" / "renpy" / "android"
+    gradle_files: list[Path] = []
+    for base in (proto, sdk.rapt / "templates", sdk.rapt / "project"):
+        if base.is_dir():
+            gradle_files += [p for p in base.rglob("*.gradle") if "build" not in p.relative_to(base).parts[:-1]]
+    touched = []
+    for gf in gradle_files:
+        try:
+            s = gf.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        orig = s
+        s = re.sub(r"\n[ \t]*maven \{[^\n]*bintray[^\n]*\}[ \t]*", "", s)
+        s = "".join(ln for ln in s.splitlines(True) if "com.danikula" not in ln and "bintray" not in ln)
+        s = s.replace("jcenter()", "mavenCentral()")
+        if "google()" in s and "mavenCentral()" not in s:
+            s = s.replace("google()", "google()\n        mavenCentral()")
+        if s != orig:
+            gf.write_text(s, encoding="utf-8")
+            touched.append(str(gf.relative_to(sdk.rapt)))
     removed = []
-    for fn in ("DownloaderActivity.java", "DownloaderService.java", "DownloaderAlarmReceiver.java"):
-        f = java_dir / fn
-        if f.is_file():
-            f.unlink()
-            removed.append(fn)
+    for base in (proto, sdk.rapt / "project"):
+        if base.is_dir():
+            for f in list(base.rglob("Downloader*.java")):
+                f.unlink()
+                removed.append(f.name)
     # build.txt marqué : copy_project() de RAPT (update_always) recopiera le prototype dans rapt\project en conservant local.properties
     bt.write_text(stamp.rstrip("\n") + "\n" + LEGACY_PATCH_MARK + "\n", encoding="utf-8")
-    log(T("android.log.legacy_patch", removed=", ".join(removed) or "—"))
+    log(T("android.log.legacy_patch", removed=", ".join(sorted(set(removed)) + touched) or "—"))
     return True
 
 
