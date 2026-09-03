@@ -194,6 +194,10 @@ class AndroidAnalysis:
     rpa_extracted: list[str] = field(default_factory=list)     # archives dont toutes les entrées existent déjà en fichiers libres
     rpa_extracted_bytes: int = 0
     has_hd2x: bool = False
+    hd2x_dir: Path | None = None      # dossier des sorties DLSS (hd2x/, avec factor.txt)
+    hd2x_bytes: int = 0
+    hd2x_count: int = 0
+    hd2x_factor: float = 2.0
     has_backup: bool = False
     has_hook: bool = False
     has_tl: bool = False
@@ -222,11 +226,14 @@ class AndroidAnalysis:
         other = self.other_bytes - (self.rpa_extracted_bytes if skip_extracted_rpa else 0)
         return images + (self.videos_bytes if include_videos else 0) + other + ENGINE_OVERHEAD
 
-    def estimated_split(self, ext_audio: bool, skip_extracted_rpa: bool = True) -> tuple[int, int]:
-        """Mode « données séparées » : (APK léger, pack de données). Les images de gui/ restent dans l'APK."""
+    def estimated_split(self, ext_audio: bool, skip_extracted_rpa: bool = True, image_mode: str = "original") -> tuple[int, int]:
+        """Mode « données séparées » : (APK léger, pack de données). Les images de gui/ restent dans l'APK.
+        image_mode improved : même ordre de grandeur que les originales (qualité 92) ; hd2x : dossier hd2x ajouté au pack."""
         other = self.other_bytes - (self.rpa_extracted_bytes if skip_extracted_rpa else 0)
         rpa_left = self.rpa_bytes - (self.rpa_extracted_bytes if skip_extracted_rpa else 0)
         pack = (self.images_bytes - self.gui_images_bytes) + self.videos_bytes + (self.audio_bytes if ext_audio else 0) + rpa_left
+        if image_mode == "hd2x":
+            pack += self.hd2x_bytes
         apk = other - rpa_left - (self.audio_bytes if ext_audio else 0) + self.gui_images_bytes + ENGINE_OVERHEAD
         return max(apk, ENGINE_OVERHEAD), max(pack, 0)
 
@@ -306,8 +313,15 @@ def analyze_game(root: str, refresh_versions: bool = False) -> AndroidAnalysis:
     for d in game.iterdir():
         if d.is_dir() and _is_excluded_dir(d.name):
             low = d.name.lower()
-            if low.startswith("hd2x"):
+            if low.startswith("hd2x") and (d / "factor.txt").is_file() and (a.hd2x_dir is None or d.name.lower() == "hd2x"):
                 a.has_hd2x = True
+                a.hd2x_dir = d
+                try:
+                    a.hd2x_bytes = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                    a.hd2x_count = sum(1 for f in d.rglob("*") if f.is_file() and f.suffix.lower() in core.IMAGE_EXTS)
+                    a.hd2x_factor = float((d / "factor.txt").read_text(encoding="utf-8").strip() or "2")
+                except Exception:
+                    pass
             if low == core.BACKUP_DIR:
                 a.has_backup = True
             try:
@@ -856,6 +870,13 @@ class BuildConfig:
     ext_audio: bool = False          # external : l'audio va aussi dans le pack
     link_pack: bool = True           # external : liens physiques NTFS vers les fichiers du jeu quand le pack est sur le même disque (instantané, 0 octet)
     arm64_legacy: bool = False       # jeu Ren'Py 7.0–7.3 : décompiler (unrpyc) et construire avec le SDK ARM64_LEGACY_SDK (arm64-v8a) au lieu du RAPT d'origine
+    image_mode: str = "original"     # original | improved (hd2x réduit à la taille d'origine, Lanczos) | hd2x (dossier hd2x complet + hook zz_dlss_hd.rpy)
+    hd2x_cache_mb: int = 512         # hd2x : config.image_cache_size_mb écrit dans le hook (1536 sur PC : trop pour un téléphone)
+
+
+IMAGE_MODES = ("original", "improved", "hd2x")
+IMPROVED_QUALITY = 92
+HD2X_ANDROID_CACHE_MB = 512
 
 
 ARM64_LEGACY_SDK = "7.8.7"           # dernier Ren'Py 7 (Python 2) : produit arm64-v8a + armeabi-v7a + x86_64 ; recompile les .rpy décompilés
@@ -900,6 +921,8 @@ def default_config(a: AndroidAnalysis, sdk_version: str = "") -> BuildConfig:
     cfg.decompile = bool(a.rpy_missing)
     cfg.data_mode = "external" if a.estimated_apk(False) > APK_SOFT_LIMIT else "apk"
     cfg.ext_audio = a.audio_bytes > EXT_AUDIO_THRESHOLD
+    cfg.image_mode = "improved" if a.hd2x_dir is not None else "original"
+    cfg.hd2x_cache_mb = HD2X_ANDROID_CACHE_MB
     return cfg
 
 
@@ -987,6 +1010,115 @@ class StageResult:
     pack_bytes: int = 0
     pack_linked: bool = False             # pack fait de liens physiques (même volume NTFS) plutôt que de copies
     probes: list[str] = field(default_factory=list)
+    image_mode: str = "original"
+    improved: int = 0                     # images améliorées (réduites depuis hd2x) présentes dans le pack
+    improved_skipped: int = 0             # déjà présentes (reprise)
+    improved_failed: int = 0
+    hd2x_files: int = 0
+
+
+_HD_ALT_EXTS = (".webp", ".png", ".jpg", ".jpeg")
+
+
+def hd2x_counterpart(hd_dir: Path | None, rel: str) -> Path | None:
+    """Sortie DLSS correspondant à l'image `rel` (chemin relatif à game/), avec les mêmes règles que le hook zz_dlss_hd.rpy :
+    même chemin sous hd2x/, extension éventuellement différente (.webp/.png/.jpg), et aussi sous images/ pour un chemin nu."""
+    if hd_dir is None:
+        return None
+    name = rel.replace("\\", "/")
+    bases = [name] if name.lower().startswith("images/") else [name, "images/" + name]
+    for base in bases:
+        cand = hd_dir / base
+        if cand.is_file():
+            return cand
+        stem, dot, ext = base.rpartition(".")
+        if dot:
+            for alt in _HD_ALT_EXTS:
+                if alt != "." + ext.lower():
+                    c2 = hd_dir / (stem + alt)
+                    if c2.is_file():
+                        return c2
+    return None
+
+
+def _improve_one(hd: Path, dst: Path, orig: Path) -> tuple[str, int]:
+    """Réduit la sortie DLSS `hd` à la taille en pixels de `orig`, dans le format de `orig` (qualité 92 ; PNG garde l'alpha).
+    Renvoie ("done" | "skipped" | "failed", octets écrits). Ne réécrit jamais un fichier lié à l'original (st_nlink > 1)."""
+    from PIL import Image
+    try:
+        if dst.is_file():
+            st = dst.stat()
+            if st.st_nlink == 1 and st.st_size > 0 and st.st_mtime >= hd.stat().st_mtime:
+                return "skipped", st.st_size
+        with Image.open(orig) as o:
+            size = o.size
+            fmt = (o.format or "").upper()
+        with Image.open(hd) as h:
+            h.load()
+            im = h if h.size == size else h.resize(size, Image.LANCZOS)
+            ext = orig.suffix.lower()
+            if ext in (".jpg", ".jpeg") or fmt == "JPEG":
+                if im.mode not in ("RGB", "L"):
+                    im = im.convert("RGB")
+                params = {"quality": IMPROVED_QUALITY, "subsampling": 0, "optimize": True}
+                fmt_out = "JPEG"
+            elif ext == ".webp" or fmt == "WEBP":
+                params = {"quality": IMPROVED_QUALITY, "method": 4}
+                fmt_out = "WEBP"
+            else:
+                if im.mode not in ("RGBA", "RGB", "L", "LA", "P"):
+                    im = im.convert("RGBA")
+                params = {"optimize": False, "compress_level": 6}
+                fmt_out = "PNG"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst.exists():
+                dst.unlink()                      # jamais d'écriture dans un lien physique vers l'original
+            tmp = dst.with_name(dst.name + ".part")
+            im.save(tmp, fmt_out, **params)
+            tmp.replace(dst)
+        return "done", dst.stat().st_size
+    except Exception:
+        try:
+            if dst.exists() and dst.stat().st_nlink == 1:
+                dst.unlink()
+        except OSError:
+            pass
+        return "failed", 0
+
+
+def improve_images(jobs: list[tuple[Path, Path, Path]], log: Callable[[str], None], on_progress: Callable[[Progress], None],
+                   cancel: threading.Event, t0: float) -> tuple[int, int, int, int]:
+    """Pool de threads (PIL libère le GIL au décodage / redimensionnement / encodage). Renvoie (faites, sautées, échecs, octets)."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    workers = max(2, min(16, (os.cpu_count() or 4)))
+    p = Progress(phase=T("android.phase.improve"))
+    done = skipped = failed = total_bytes = 0
+    last = 0.0
+    log(T("android.log.improve_start", n=len(jobs), workers=workers))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(_improve_one, hd, dst, orig): dst for hd, dst, orig in jobs}
+        for i, fut in enumerate(as_completed(futures), 1):
+            if cancel.is_set():
+                for f in futures:
+                    f.cancel()
+                raise Cancelled()
+            status, nbytes = fut.result()
+            total_bytes += nbytes
+            if status == "done":
+                done += 1
+            elif status == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+                log(T("android.log.improve_failed", file=futures[fut].name))
+            if time.time() - last > 0.5 or i == len(jobs):
+                last = time.time()
+                p.fraction, p.detail, p.elapsed = i / len(jobs), f"{i} / {len(jobs)}", time.time() - t0
+                on_progress(p)
+            if i % 1000 == 0:
+                log(T("android.log.improve_progress", i=i, n=len(jobs), elapsed=core.format_eta(time.time() - t0)))
+    log(T("android.log.improve_done", done=done, skipped=skipped, failed=failed, size=core.human_size(total_bytes)))
+    return done, skipped, failed, total_bytes
 
 
 def _same_volume(a: Path, b: Path) -> bool:
@@ -1051,12 +1183,20 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
     external = cfg.data_mode == "external"
     pack_dir = pack_dir_for(cfg) if external else None
     link = False
+    image_mode = cfg.image_mode if (external and a.hd2x_dir is not None and cfg.image_mode in IMAGE_MODES) else "original"
+    res.image_mode = image_mode
+    improve_jobs: list[tuple[Path, Path, Path]] = []      # (hd2x source, destination du pack, original)
     if external and pack_dir is not None:
         res.pack_dir = pack_dir
         if pack_dir.exists():
-            log(T("android.log.pack_clean", dir=pack_dir))
-            _rmtree_force(pack_dir)
-        (pack_dir / "game").mkdir(parents=True)
+            if image_mode == "improved":
+                log(T("android.log.pack_reuse", dir=pack_dir))       # reprise : les images déjà réduites sont gardées
+                if (pack_dir / "game" / "hd2x").is_dir():
+                    _rmtree_force(pack_dir / "game" / "hd2x")
+            else:
+                log(T("android.log.pack_clean", dir=pack_dir))
+                _rmtree_force(pack_dir)
+        (pack_dir / "game").mkdir(parents=True, exist_ok=True)
         link = bool(cfg.link_pack) and _same_volume(a.game, pack_dir)
         log(T("android.log.pack_mode", dir=pack_dir, how=T("android.log.pack_linked") if link else T("android.log.pack_copied")))
     if external:
@@ -1083,7 +1223,11 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
         ext = sp.suffix.lower()
         if to_pack(rel, ext):
             assert pack_dir is not None
-            if _place_file(sp, pack_dir / "game" / rel, link):
+            dst = pack_dir / "game" / rel
+            hd = hd2x_counterpart(a.hd2x_dir, rel) if (image_mode == "improved" and ext in core.IMAGE_EXTS) else None
+            if hd is not None:
+                improve_jobs.append((hd, dst, sp))          # généré après la copie (pool de threads)
+            elif _place_file(sp, dst, link):
                 res.pack_linked = True
             res.pack_files += 1
             res.pack_bytes += size
@@ -1173,6 +1317,30 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
             size = item.stat().st_size
             place(item, item.name, size)
             tick(size, item.name)
+    if external and pack_dir is not None and image_mode == "improved" and improve_jobs:
+        # images améliorées à la taille d'origine : réduction Lanczos des sorties DLSS (pool de threads, reprise = fichiers existants gardés)
+        done, skipped, failed, gen_bytes = improve_images(improve_jobs, log, on_progress, cancel, t0)
+        res.improved, res.improved_skipped, res.improved_failed = done + skipped, skipped, failed
+        res.pack_bytes += gen_bytes - sum(j[2].stat().st_size for j in improve_jobs if j[2].is_file())
+    if external and pack_dir is not None and image_mode == "hd2x" and a.hd2x_dir is not None:
+        # dossier hd2x complet dans le pack (liens) + hook zz_dlss_hd.rpy dans l'APK avec un cache d'images adapté au téléphone
+        hd_dst = pack_dir / "game" / "hd2x"
+        n = 0
+        for f in a.hd2x_dir.rglob("*"):
+            if f.is_file():
+                if cancel.is_set():
+                    raise Cancelled()
+                rel_hd = f.relative_to(a.hd2x_dir)
+                if _place_file(f, hd_dst / rel_hd, link):
+                    res.pack_linked = True
+                n += 1
+                sz = f.stat().st_size
+                res.pack_files += 1
+                res.pack_bytes += sz
+                tick(sz, ("hd2x" / rel_hd).as_posix())
+        (build_dir / "game" / core.HOOK_NAME).write_text(core.render_hook("hd2x", int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB)), encoding="utf-8")
+        res.hd2x_files = n
+        log(T("android.log.hd2x_packed", n=n, size=core.human_size(a.hd2x_bytes), cache=int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB)))
     if external and pack_dir is not None:
         # hook + manifeste dans la copie de construction (donc dans l'APK), mode d'emploi dans le pack
         shutil.copy2(EXTDATA_HOOK_SRC, build_dir / "game" / EXTDATA_HOOK_NAME)
@@ -1737,7 +1905,9 @@ def write_build_manifest(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, st:
         "generator": "RenPyHD", "name": cfg.name.strip(), "package": cfg.package.strip().lower(), "version": cfg.version.strip(),
         "numeric_version": int(cfg.numeric_version), "game_root": str(a.root), "renpy_version": a.version, "sdk_version": sdk.version,
         "sdk_family": sdk.family, "built": time.time(), "built_text": time.strftime("%Y-%m-%d %H:%M"),
-        "data_mode": cfg.data_mode, "apk": main.name if main else "", "apk_bytes": main.stat().st_size if main else 0,
+        "data_mode": cfg.data_mode, "image_mode": st.image_mode if st else "original", "improved": st.improved if st else 0,
+        "hd2x_files": st.hd2x_files if st else 0, "hd2x_cache_mb": int(cfg.hd2x_cache_mb) if cfg.image_mode == "hd2x" else 0,
+        "apk": main.name if main else "", "apk_bytes": main.stat().st_size if main else 0,
         "files": [f.name for f in r.files], "bundle": bool(cfg.bundle), "elapsed": r.elapsed,
         "pack_dir": st.pack_dir.name if (st and st.pack_dir) else "", "pack_files": st.pack_files if st else 0, "pack_bytes": st.pack_bytes if st else 0,
         "pack_linked": bool(st.pack_linked) if st else False, "signed": (verify or {}).get("signed"), "phone_data_path": phone_data_path(cfg.package.strip().lower()),

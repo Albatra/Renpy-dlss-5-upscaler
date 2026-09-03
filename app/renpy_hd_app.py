@@ -1731,7 +1731,8 @@ _ANDROID: dict[str, object] = {"analysis": None, "sdk": None, "jdk": None, "buil
 ORIENTATION_LABELS = {t(f"android.orientation.{k}"): k for k in android.ORIENTATIONS}
 STEP_A1_HINT = t("android.step1_hint")
 A_CFG_KEYS = ("name", "icon_name", "package", "version", "numeric", "orientation", "internet", "videos", "budget", "icon", "bundle", "decompile",
-              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "arm64", "estimate")
+              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "arm64", "image_mode", "estimate")
+IMAGE_MODE_LABELS = {t("android.images.original"): "original", t("android.images.improved"): "improved", t("android.images.hd2x"): "hd2x"}
 DATA_MODE_LABELS = {t("android.data.apk"): "apk", t("android.data.external"): "external"}
 CACHE_KIND_LABELS = {k: t(f"android.cache.kind.{k}") for k in ("sdk", "jdk", "gradle", "unrpyc", "downloads", "build")}
 
@@ -1766,9 +1767,9 @@ def _a_env_md(version: str, manual_sdk: str) -> tuple[str, bool]:
 
 
 def _a_estimate_md(a: android.AndroidAnalysis, include_videos: bool, budget_mb: float, skip_rpa: bool, data_mode: str = "apk",
-                   ext_audio: bool = False) -> str:
+                   ext_audio: bool = False, image_mode: str = "original") -> str:
     if DATA_MODE_LABELS.get(data_mode, data_mode) == "external":
-        apk, pack = a.estimated_split(bool(ext_audio), bool(skip_rpa))
+        apk, pack = a.estimated_split(bool(ext_audio), bool(skip_rpa), IMAGE_MODE_LABELS.get(image_mode, image_mode))
         msg = t("android.cfg.estimate_split", apk=core.human_size(apk), pack=core.human_size(pack), path=android.phone_data_path("<package>"))
         if apk > android.APK_SOFT_LIMIT:
             msg += "  \n" + t("android.cfg.too_big")
@@ -1799,13 +1800,16 @@ def _a_cfg_updates(a: android.AndroidAnalysis, sdk_version: str) -> list:
         {v: k for k, v in DATA_MODE_LABELS.items()}[cfg.data_mode],
         gr.update(value=cfg.ext_audio, label=t("android.cfg.ext_audio", n=a.audio_count, size=core.human_size(a.audio_bytes)), visible=a.audio_count > 0),
         gr.update(value=a.family == "legacy", label=t("android.cfg.arm64", sdk=android.ARM64_LEGACY_SDK), visible=a.family == "legacy"),
-        _a_estimate_md(a, False, 0, True, cfg.data_mode, cfg.ext_audio),
+        gr.update(value={v: k for k, v in IMAGE_MODE_LABELS.items()}[cfg.image_mode], visible=a.hd2x_dir is not None,
+                  info=t("android.images.info", n=a.hd2x_count, size=core.human_size(a.hd2x_bytes), factor=a.hd2x_factor, cache=android.HD2X_ANDROID_CACHE_MB)
+                  if a.hd2x_dir is not None else (t("android.images.backup_info") if a.has_backup else "")),
+        _a_estimate_md(a, False, 0, True, cfg.data_mode, cfg.ext_audio, cfg.image_mode),
     ]
 
 
-def android_estimate(include_videos: bool, budget_mb: float, skip_rpa: bool, data_mode: str, ext_audio: bool) -> str:
+def android_estimate(include_videos: bool, budget_mb: float, skip_rpa: bool, data_mode: str, ext_audio: bool, image_mode: str) -> str:
     a = _ANDROID.get("analysis")
-    return _a_estimate_md(a, include_videos, budget_mb, skip_rpa, data_mode, ext_audio) if isinstance(a, android.AndroidAnalysis) else ""
+    return _a_estimate_md(a, include_videos, budget_mb, skip_rpa, data_mode, ext_audio, image_mode) if isinstance(a, android.AndroidAnalysis) else ""
 
 
 def android_analyze(game_root: str):
@@ -1921,7 +1925,8 @@ def android_prepare(game_root: str, sdk_choice: str, manual_sdk: str, org: str, 
 def _a_config_from(v: list) -> android.BuildConfig:
     cfg = android.BuildConfig()
     (name, icon_name, package, version, numeric, orientation_label, internet, videos, budget, icon, bundle, decompile, skip_rpa, prefer_rpyc,
-     data_mode, ext_audio, arm64, _estimate) = v
+     data_mode, ext_audio, arm64, image_mode, _estimate) = v
+    cfg.image_mode = IMAGE_MODE_LABELS.get(image_mode, "original")
     cfg.name, cfg.icon_name, cfg.package, cfg.version = str(name).strip(), str(icon_name).strip(), str(package).strip(), str(version).strip()
     cfg.numeric_version = int(numeric or 0)
     cfg.orientation = ORIENTATION_LABELS.get(orientation_label, "sensorLandscape")
@@ -2023,6 +2028,10 @@ def android_build(*v):
             md += "  \n" + t("android.pack_note", dir=st.pack_dir, files=st.pack_files, size=core.human_size(st.pack_bytes),
                              how=t("android.pack_linked") if st.pack_linked else t("android.pack_copied"))
             md += "  \n" + t("android.pack_howto", path=android.phone_data_path(pkg), obb=f"/sdcard/Android/obb/{pkg}/game", pkg=pkg)
+            if st.image_mode == "improved":
+                md += "  \n" + t("android.images.improved_note", n=st.improved, skipped=st.improved_skipped, failed=st.improved_failed)
+            elif st.image_mode == "hd2x":
+                md += "  \n" + t("android.images.hd2x_note", n=st.hd2x_files, cache=int(cfg.hd2x_cache_mb))
     if "decompile" in stage_info:
         ok, errors = stage_info["decompile"]  # type: ignore[misc]
         md += "  \n" + t("android.decompile_result", ok=ok, errors=len(errors))
@@ -2854,6 +2863,7 @@ def build_ui() -> gr.Blocks:
                                 a_decompile = gr.Checkbox(False, label=t("android.cfg.decompile"), visible=False)
                                 a_bundle = gr.Checkbox(False, label=t("android.cfg.bundle"), visible=android.ANDROID_BUNDLE_ENABLED)
                                 a_arm64 = gr.Checkbox(False, label=t("android.cfg.arm64", sdk=android.ARM64_LEGACY_SDK), visible=False)
+                                a_image_mode = gr.Radio(list(IMAGE_MODE_LABELS), value=list(IMAGE_MODE_LABELS)[0], label=t("android.images.label"), visible=False)
                                 a_estimate = gr.Markdown("", elem_classes=["rhd-hint"])
                         with gr.Column(elem_classes=["rhd-step"]):
                             gr.HTML(_step_title(4, t("android.step4_title")))
@@ -3053,7 +3063,7 @@ def build_ui() -> gr.Blocks:
         t_target.change(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
         # ouverture directe d'un onglet / d'un jeu par l'URL (?tab=tab_tools&sub=sub_rpa&game=…)
         a_cfg_fields = [a_name, a_icon_name, a_package, a_version, a_numeric, a_orientation, a_internet, a_videos, a_budget, a_icon, a_bundle,
-                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_arm64, a_estimate]
+                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_arm64, a_image_mode, a_estimate]
         a_analyze_outputs = [a_summary, a_step2, a_step2_hint, a_sdk, a_env_md, a_step3, a_step3_hint, a_step4, a_step4_hint] + a_cfg_fields
         demo.load(deeplink, None, [tabs, tools_tabs, inputs["game_root"], x_root, t_root, a_root], queue=False).then(
             rpa_scan, x_root, x_scan_outputs, queue=False).then(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False).then(
@@ -3092,8 +3102,8 @@ def build_ui() -> gr.Blocks:
         a_prep_cancel.click(tools_cancel, None, a_prep_status, queue=False)
         a_open_keys.click(android_open_keys, None, None, queue=False)
         a_icon_browse.click(android_icon_browse, a_icon, a_icon)
-        for comp in (a_videos, a_budget, a_skip_rpa, a_data_mode, a_ext_audio):
-            comp.change(android_estimate, [a_videos, a_budget, a_skip_rpa, a_data_mode, a_ext_audio], a_estimate, queue=False)
+        for comp in (a_videos, a_budget, a_skip_rpa, a_data_mode, a_ext_audio, a_image_mode):
+            comp.change(android_estimate, [a_videos, a_budget, a_skip_rpa, a_data_mode, a_ext_audio, a_image_mode], a_estimate, queue=False)
         a_go.click(android_build, a_cfg_fields, [a_status, a_bar, a_log, a_done, a_done_md], concurrency_limit=1, show_progress="minimal").then(
             android_mgr_refresh, None, [m_table, m_pick, m_summary], queue=False)
         a_cancel.click(tools_cancel, None, a_status, queue=False)

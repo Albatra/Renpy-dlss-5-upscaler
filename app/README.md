@@ -220,6 +220,12 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    « Vérifier (lancement sur PC) » (`verify_build`, sonde `renpyhd_verify_probe.rpy` copiée dans la copie sous le nom
    `zz_renpyhd_verify.rpy`) : lance `renpy.py <copie>` avec le SDK de la construction et `RENPYHD_EXTDATA` vers le pack,
    contrôle label `start` + images témoins + menu principal rendu (délai 300 s), résultat dans `build.json` (`verified`).
+   **Images** (`BuildConfig.image_mode`, données séparées, jeu avec `hd2x/` + `factor.txt`) : `original` ; `improved`
+   (défaut) — `hd2x_counterpart` (mêmes règles que le hook : même chemin sous hd2x/, extensions .webp/.png/.jpg, préfixe
+   images/) puis `improve_images` (pool de threads, `_improve_one` : ouverture de l'original pour sa taille et son format,
+   `resize(LANCZOS)` de la sortie DLSS, JPEG/WebP qualité 92, PNG avec alpha, fichier `.part` puis renommage, reprise si
+   le fichier existe et n'est pas un lien vers l'original : `st_nlink == 1`) ; `hd2x` — dossier hd2x lié dans le pack
+   (`game/hd2x/`, résolu par `config.searchpath` du pack) + `core.render_hook("hd2x", 512)` écrit dans `game/` de l'APK.
    **ABI et téléphone** : `adb_device_info` (modèle, Android, `ro.product.cpu.abilist`), `pick_apk_for_device` (universel,
    sinon arm64-v8a > armeabi-v7a > x86_64 > x86, sinon refus expliqué), `adb_launch` (`monkey -p <paquet> … LAUNCHER 1`).
    **Route arm64 des jeux 7.0–7.3** (`BuildConfig.arm64_legacy`, SDK `ARM64_LEGACY_SDK` = 7.8.7) : le RAPT 7.0–7.2 ne

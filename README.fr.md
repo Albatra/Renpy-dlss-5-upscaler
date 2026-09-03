@@ -128,6 +128,10 @@ tournent tels quels (vérifié par un vrai lancement avec Ren'Py 7.3.5 ; un SDK 
 (lancement sur PC)* dans *Mes APK* lance n'importe quelle copie de construction avec son SDK et contrôle le label `start`,
 le menu principal et le pack de données. Pas de clé Google Play.
 
+**Images DLSS sur le téléphone** (étape 3 *Images*) : *Améliorées, taille d'origine* (défaut) livre chaque sortie DLSS
+réduite à la taille d'origine — le gain du rendu neuronal sans textures 4× plus lourdes ; *HD 2x complètes + hook* livre
+`hd2x/` tel quel avec le hook (cache d'images plafonné à 512 Mo — bien pour un jeu 720p→1440p, trop lourd en 1080p→4K).
+
 **Téléphones et ABI** : *Rechercher les appareils* affiche le modèle, la version d'Android et les ABI acceptées ;
 l'installation choisit l'APK universel ou celui qui correspond à l'appareil (arm64-v8a > armeabi-v7a > x86_64) et refuse
 clairement sinon. Les téléphones 64 bits seulement (Galaxy Z Fold 6, Pixel 7+…) exigent l'arm64-v8a, que le RAPT d'origine

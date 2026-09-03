@@ -66,6 +66,9 @@ setup.bat
   dependency lived on the closed bintray repository) and builds with the exact SDK, so the game's compiled scripts run
   as-is (verified by a real launch with Ren'Py 7.3.5). *Verify (launch on PC)* in *My APKs* starts any build copy with its
   SDK and checks the `start` label, the main menu and the data pack. HD 2x images and DLSS backups are never included.
+  **DLSS images on the phone** (step 3 *Images*): *Improved, original size* (default) ships each DLSS output downscaled
+  back to the original pixel size — the neural-rendering gain without 4× heavier textures; *Full HD 2x + hook* ships
+  `hd2x/` as-is with the hook (image cache capped at 512 MB — good for 720p→1440p games, too heavy for 1080p→4K).
   **Phones and ABIs**: *Search devices* shows the model, Android version and accepted ABIs; install picks the universal
   APK or the one matching the device (arm64-v8a > armeabi-v7a > x86_64) and refuses clearly otherwise. 64-bit-only
   phones (Galaxy Z Fold 6, Pixel 7+…) need arm64-v8a, which the original RAPT of Ren'Py 7.0–7.2 games cannot produce:
