@@ -1664,6 +1664,14 @@ def adb_push_data(sdk: SdkInfo, pack_dir: Path, package: str, log: Callable[[str
         proc.wait()
         if proc.returncode:
             return proc.returncode or 1, "\n".join(out)
+    # Android 11+ (vérifié Galaxy Z Fold 6 / Android 16) : les dossiers créés par « adb push » appartiennent à l'utilisateur shell
+    # (drwxrws--- shell ext_data_rw) et l'application obtient « Permission denied » en les listant ; a+rX règle le problème.
+    try:
+        subprocess.run([str(sdk.adb), "shell", "chmod", "-R", "a+rX", phone_data_path(package)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", creationflags=NO_WINDOW, timeout=1800)
+        log("$ adb shell chmod -R a+rX " + phone_data_path(package))
+    except Exception:
+        pass
     # contrôle : nombre de fichiers présents sur le téléphone
     try:
         proc = subprocess.run([str(sdk.adb), "shell", "find", phone_data_path(package), "-type", "f", "|", "wc", "-l"], capture_output=True, text=True,

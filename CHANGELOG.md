@@ -54,7 +54,9 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   drops the `.rpyc`, runs `renpy.py <copy> compile` with an automatic fix pass (`fix_script_line`: empty `with x:` blocks,
   stray indentation) and builds with the 7.8.7 SDK → universal arm64-v8a + armeabi-v7a + x86_64 APK. Verified on Melody
   (Ren'Py 7.1.0): 23 `.rpyc` decompiled, no fix needed, APK in 66 s, desktop launch OK, then installed and launched on a
-  Samsung Galaxy Z Fold 6 (Android 16, arm64-v8a only) with the 6 GB data pack pushed over adb.
+  Samsung Galaxy Z Fold 6 (Android 16, arm64-v8a only) with the 6 GB data pack pushed over adb (209 s, 29 MB/s).
+  On Android 11+ the folders created by `adb push` belong to the `shell` user and the app got `Permission denied`
+  listing `files/game`: the push now ends with `chmod -R a+rX` (verified: Ren'Py then loads the pack on the phone).
 - **Verify (launch on PC)** in *My APKs*: runs the build copy with the SDK of the build (`RENPYHD_EXTDATA` pointing to
   the data pack when relevant) and a probe (`renpyhd_verify_probe.rpy`) that checks the `start` label, the probe images
   and the rendered main menu within a timeout; result stored in `build.json` and shown in the table.
