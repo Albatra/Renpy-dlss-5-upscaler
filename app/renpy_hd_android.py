@@ -992,18 +992,43 @@ def _same_volume(a: Path, b: Path) -> bool:
         return False
 
 
+def _writable(path: Path) -> None:
+    """Lève l'attribut « lecture seule » (certains jeux sont distribués avec des fichiers en lecture seule : Windows
+    refuse ensuite de les écraser ou de les supprimer dans la copie de construction → WinError 5)."""
+    try:
+        os.chmod(path, 0o666)
+    except OSError:
+        pass
+
+
+def _rmtree_force(path: Path) -> None:
+    """shutil.rmtree qui lève d'abord la lecture seule sur les fichiers récalcitrants."""
+    def _onerror(func, p, exc_info):
+        _writable(Path(p))
+        try:
+            func(p)
+        except OSError:
+            pass
+    shutil.rmtree(path, onerror=_onerror)
+
+
 def _place_file(src: Path, dst: Path, link: bool) -> bool:
-    """Copie `src` vers `dst` (lien physique si `link`, sinon copie). Renvoie True si un lien a été créé."""
+    """Copie `src` vers `dst` (lien physique si `link`, sinon copie). Renvoie True si un lien a été créé.
+    Un fichier source en lecture seule est toujours copié (un lien physique partagerait l'attribut)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if link:
+    if link and os.access(src, os.W_OK):
         try:
             if dst.exists():
+                _writable(dst)
                 dst.unlink()
             os.link(src, dst)
             return True
         except OSError:
             pass
+    if dst.exists():
+        _writable(dst)
     shutil.copy2(src, dst)
+    _writable(dst)
     return False
 
 
@@ -1017,7 +1042,7 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
     skip_rpa = set(a.rpa_extracted) if cfg.skip_extracted_rpa else set()
     if build_dir.exists():
         log(T("android.log.stage_clean", dir=build_dir))
-        shutil.rmtree(build_dir)
+        _rmtree_force(build_dir)
     (build_dir / "game").mkdir(parents=True)
     external = cfg.data_mode == "external"
     pack_dir = pack_dir_for(cfg) if external else None
@@ -1026,7 +1051,7 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
         res.pack_dir = pack_dir
         if pack_dir.exists():
             log(T("android.log.pack_clean", dir=pack_dir))
-            shutil.rmtree(pack_dir)
+            _rmtree_force(pack_dir)
         (pack_dir / "game").mkdir(parents=True)
         link = bool(cfg.link_pack) and _same_volume(a.game, pack_dir)
         log(T("android.log.pack_mode", dir=pack_dir, how=T("android.log.pack_linked") if link else T("android.log.pack_copied")))
@@ -1173,6 +1198,11 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
         log(T("android.log.stage_videos_skipped", n=res.videos_skipped))
     if res.rpy_skipped:
         log(T("android.log.stage_rpy_skipped", n=res.rpy_skipped))
+    # Lecture seule héritée du jeu (copies tl/, extras…) : on la lève sur toute la copie de construction.
+    for p in build_dir.rglob('*'):
+        if p.is_file() and not os.access(p, os.W_OK):
+            _writable(p)
+
     return res
 
 
