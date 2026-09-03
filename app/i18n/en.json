@@ -748,5 +748,7 @@
   "android.verify.no_menu": "the main menu was not rendered.",
   "android.verify.no_report": "no probe report (the game crashed before the main menu).",
   "android.verify.ok_detail": "Ren'Py {version}, start label present, {files} files, {images} probe image(s) loaded, main menu rendered.",
-  "single.paste": "… or paste an image (Ctrl+V)"
+  "single.paste": "Paste from clipboard",
+  "single.paste_none": "The clipboard holds no image or image file: copy an image (or an image file in Explorer) and try again.",
+  "single.paste_err": "Could not read the clipboard: {err}"
 }

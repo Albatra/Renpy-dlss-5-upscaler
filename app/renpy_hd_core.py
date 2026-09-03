@@ -1879,6 +1879,39 @@ def _run_dialog(script: str) -> str:
 IMAGE_DIALOG_FILTER = (T("core.dialog.image_filter") + "|*.png;*.jpg;*.jpeg;*.webp;*.avif;*.tiff|" + T("core.dialog.all_files") + "|*.*")
 
 
+def clipboard_to_file(dest_dir: Path) -> tuple[str, str]:
+    """Lit le presse-papiers Windows côté application (PowerShell STA), sans dépendre des permissions du navigateur :
+    image bitmap → PNG horodaté dans dest_dir ; fichier image copié dans l'Explorateur → son chemin ; texte = chemin d'image
+    existant → ce chemin. Renvoie (chemin, "") ou ("", raison)."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out = dest_dir / ("colle_" + time.strftime("%Y%m%d-%H%M%S") + ".png")
+    exts = ".png .jpg .jpeg .webp .bmp .gif .tif .tiff .avif"
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; "
+        "$cb = [System.Windows.Forms.Clipboard]; "
+        "if ($cb::ContainsImage()) { $img = $cb::GetImage(); $img.Save('" + str(out).replace("'", "''") + "', [System.Drawing.Imaging.ImageFormat]::Png); 'IMG' } "
+        "elseif ($cb::ContainsFileDropList()) { $f = $cb::GetFileDropList() | Select-Object -First 1; 'FILE:' + $f } "
+        "elseif ($cb::ContainsText()) { 'TEXT:' + $cb::GetText().Trim().Trim([char]34) } "
+        "else { 'NONE' }"
+    )
+    try:
+        proc = subprocess.run(["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as exc:
+        return "", str(exc)
+    res = (proc.stdout or "").strip().splitlines()
+    res = res[-1].strip() if res else "NONE"
+    if res == "IMG" and out.is_file():
+        return str(out), ""
+    if res.startswith("FILE:") or res.startswith("TEXT:"):
+        cand = Path(res[5:].strip())
+        if cand.is_file() and cand.suffix.lower() in exts.split():
+            return str(cand), ""
+        return "", "notimage"
+    return "", "empty"
+
+
 def pick_file(title: str = "", filter_: str = IMAGE_DIALOG_FILTER, initial: str = "") -> str:
     """OpenFileDialog natif ; renvoie "" si annulé."""
     t, f, i = (x.replace("'", "''") for x in (title or T("core.dialog.pick_image"), filter_, str(initial)))

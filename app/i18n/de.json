@@ -748,5 +748,7 @@
   "android.verify.no_menu": "Das Hauptmenü wurde nicht gerendert.",
   "android.verify.no_report": "kein Sondenbericht (das Spiel ist vor dem Hauptmenü abgestürzt).",
   "android.verify.ok_detail": "Ren'Py {version}, Label start vorhanden, {files} Dateien, {images} Testbild(er) geladen, Hauptmenü gerendert.",
-  "single.paste": "… oder ein Bild einfügen (Strg+V)"
+  "single.paste": "Aus der Zwischenablage einfügen",
+  "single.paste_none": "Die Zwischenablage enthält kein Bild und keine Bilddatei: kopieren Sie ein Bild (oder eine Bilddatei im Explorer) und versuchen Sie es erneut.",
+  "single.paste_err": "Zwischenablage konnte nicht gelesen werden: {err}"
 }

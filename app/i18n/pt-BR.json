@@ -748,5 +748,7 @@
   "android.verify.no_menu": "o menu principal não foi renderizado.",
   "android.verify.no_report": "nenhum relatório da sonda (o jogo travou antes do menu principal).",
   "android.verify.ok_detail": "Ren'Py {version}, rótulo start presente, {files} arquivos, {images} imagem(ns) de teste carregada(s), menu principal renderizado.",
-  "single.paste": "… ou colar uma imagem (Ctrl+V)"
+  "single.paste": "Colar da área de transferência",
+  "single.paste_none": "A área de transferência não contém imagem nem arquivo de imagem: copie uma imagem (ou um arquivo de imagem no Explorador) e tente de novo.",
+  "single.paste_err": "Não foi possível ler a área de transferência: {err}"
 }

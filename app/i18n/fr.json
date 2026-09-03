@@ -748,5 +748,7 @@
   "android.verify.no_menu": "le menu principal n'a pas été rendu.",
   "android.verify.no_report": "aucun rapport de la sonde (le jeu a planté avant le menu principal).",
   "android.verify.ok_detail": "Ren'Py {version}, label start présent, {files} fichiers, {images} image(s) témoin chargée(s), menu principal rendu.",
-  "single.paste": "… ou coller une image (Ctrl+V)"
+  "single.paste": "Coller depuis le presse-papiers",
+  "single.paste_none": "Le presse-papiers ne contient ni image ni fichier image : copiez une image (ou un fichier image dans l'Explorateur) puis réessayez.",
+  "single.paste_err": "Lecture du presse-papiers impossible : {err}"
 }

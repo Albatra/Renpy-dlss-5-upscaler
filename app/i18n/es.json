@@ -748,5 +748,7 @@
   "android.verify.no_menu": "el menú principal no se ha mostrado.",
   "android.verify.no_report": "sin informe de la sonda (el juego falló antes del menú principal).",
   "android.verify.ok_detail": "Ren'Py {version}, etiqueta start presente, {files} archivos, {images} imagen(es) de prueba cargada(s), menú principal mostrado.",
-  "single.paste": "… o pegar una imagen (Ctrl+V)"
+  "single.paste": "Pegar desde el portapapeles",
+  "single.paste_none": "El portapapeles no contiene ninguna imagen ni archivo de imagen: copia una imagen (o un archivo de imagen en el Explorador) e inténtalo de nuevo.",
+  "single.paste_err": "No se pudo leer el portapapeles: {err}"
 }
