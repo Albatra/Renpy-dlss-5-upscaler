@@ -8,6 +8,16 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
 - In-game before/after (`zz_dlss_hd.rpy`): **Shift+J** cycles HD → original → split screen (the divider follows the mouse;
   each image is split at the same fraction of its own width), **Shift+H** shows the stats. Documented in Help (six
   languages) and the READMEs.
+- **In-game zoom** (`renpyhd_zoom.rpy`, stand-alone hook; Expert mode › *Install the in-game zoom (PC)* / *Remove*, also
+  removed by *Uninstall the mod*): only the **master layer** (backgrounds, sprites) is zoomed through
+  `renpy.show_layer_at(..., layer="master")` — dialogue window, menus and screens stay put. Touch: double-tap = one step
+  around the tapped point (1x → 2x → 3x → 1x, `RENPYHD:ZOOM_STEPS`), drag = pan (clamped, never an empty border),
+  x1/x2/x3 + 1:1 buttons top right (`RENPYHD:ZOOM_BUTTON`); a single tap still advances the dialogue (the first tap of a
+  double-tap too). PC: double-click, Shift+Z, Ctrl + wheel around the pointer (the wheel alone keeps rollback), right- or
+  left-button drag. No pinch (Ren'Py reports a single finger). The layer transform is re-applied at each interaction
+  (`config.interact_callbacks`) so it survives `scene` and rollback; the zoom state lives outside rollback. Verified on PC
+  with Ren'Py 7.3.5 (A Mother's Love copy) and 8.6.0 (the_question): only the master layer moves, clamping, scene change,
+  reset, lint clean (`ux\20_zoom_*.png`).
 - **Pipelined image processing** (Expert mode › *Pipelined processing (GPU fed continuously)*, on by default, plus
   *Pipeline CPU threads*, 0 = half the logical cores): the tool's `convert_images` decodes, renders and encodes one image
   at a time, so the GPU idled during every 4K JPEG/PNG/WebP encode. RenPyHD now keeps **one DLSS session** fed by a
@@ -18,6 +28,9 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   Untick the option to get the previous behaviour.
 
 ### Tools › Android (APK)
+- Step 3 **In-game zoom (double-tap, drag)** box (on by default): `renpyhd_zoom.rpy` goes into the APK's `game\`
+  (recorded as `zoom` in `build.json`); double-tap zooms around the finger, drag pans, x1/x2/x3 + 1:1 buttons; single
+  finger only (no pinch). Not yet tested on a phone (PC runs under Ren'Py 7.3.5 and 8.6.0 only).
 - New **Android (APK)** module: builds an APK of a Ren'Py game with the official **Ren'Py SDK + RAPT**, driven from their
   command line without any prompt (`renpy_hd_android.py`, `android_matrix.json`, `renpyhd_android_adapter.rpy`).
 - Four steps: choose the game (Ren'Py version, `.rpy`/`.rpyc` coverage, HD 2x / backups / hook always excluded, images,

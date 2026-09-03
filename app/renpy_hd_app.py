@@ -556,6 +556,23 @@ def uninstall(game_root: str, out_name: str):
         return t("err.plain", err=exc)
 
 
+def zoom_install(game_root: str):
+    """Mode expert : copie renpyhd_zoom.rpy (zoom en jeu, PC) dans game\\ à côté de zz_dlss_hd.rpy."""
+    try:
+        target = core.install_zoom_hook(core.find_game_dir(_clean_path(game_root)))
+        return t("expert.zoom_installed", path=target)
+    except Exception as exc:
+        return t("err.plain", err=exc)
+
+
+def zoom_remove(game_root: str):
+    try:
+        done = core.uninstall_zoom_hook(core.find_game_dir(_clean_path(game_root)))
+        return "\n".join(done) if done else t("expert.zoom_absent")
+    except Exception as exc:
+        return t("err.plain", err=exc)
+
+
 def restore(game_root: str):
     try:
         return "\n".join(core.restore_originals(_clean_path(game_root)))
@@ -1680,6 +1697,10 @@ def tl_install(game_root: str, target_label: str):
         total, done, left = tools.tl_counts(tl_dir)
         target = tools.install_language_hook(root, lang)
         msg = t("tl.installed", file=target.name, lang=lang, done=done, total=total)
+        menu_msg = getattr(tools, "LAST_INSTALL_REPORT", {}).get("message")
+        if menu_msg:
+            msg += "  
+" + menu_msg
         if left:
             msg += "  \n" + t("tl.installed_left", n=left)
         return msg, tl_status_md(root, target_label)
@@ -1734,7 +1755,7 @@ _ANDROID: dict[str, object] = {"analysis": None, "sdk": None, "jdk": None, "buil
 ORIENTATION_LABELS = {t(f"android.orientation.{k}"): k for k in android.ORIENTATIONS}
 STEP_A1_HINT = t("android.step1_hint")
 A_CFG_KEYS = ("name", "icon_name", "package", "version", "numeric", "orientation", "internet", "videos", "budget", "icon", "bundle", "decompile",
-              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "arm64", "image_mode", "estimate")
+              "skip_rpa", "prefer_rpyc", "data_mode", "ext_audio", "arm64", "image_mode", "zoom", "estimate")
 IMAGE_MODE_LABELS = {t("android.images.original"): "original", t("android.images.improved"): "improved", t("android.images.hd2x"): "hd2x"}
 DATA_MODE_LABELS = {t("android.data.apk"): "apk", t("android.data.external"): "external"}
 CACHE_KIND_LABELS = {k: t(f"android.cache.kind.{k}") for k in ("sdk", "jdk", "gradle", "unrpyc", "downloads", "build")}
@@ -1806,6 +1827,7 @@ def _a_cfg_updates(a: android.AndroidAnalysis, sdk_version: str) -> list:
         gr.update(value={v: k for k, v in IMAGE_MODE_LABELS.items()}[cfg.image_mode], visible=a.hd2x_dir is not None,
                   info=t("android.images.info", n=a.hd2x_count, size=core.human_size(a.hd2x_bytes), factor=a.hd2x_factor, cache=android.HD2X_ANDROID_CACHE_MB)
                   if a.hd2x_dir is not None else (t("android.images.backup_info") if a.has_backup else "")),
+        cfg.zoom,
         _a_estimate_md(a, False, 0, True, cfg.data_mode, cfg.ext_audio, cfg.image_mode),
     ]
 
@@ -1928,8 +1950,9 @@ def android_prepare(game_root: str, sdk_choice: str, manual_sdk: str, org: str, 
 def _a_config_from(v: list) -> android.BuildConfig:
     cfg = android.BuildConfig()
     (name, icon_name, package, version, numeric, orientation_label, internet, videos, budget, icon, bundle, decompile, skip_rpa, prefer_rpyc,
-     data_mode, ext_audio, arm64, image_mode, _estimate) = v
+     data_mode, ext_audio, arm64, image_mode, zoom, _estimate) = v
     cfg.image_mode = IMAGE_MODE_LABELS.get(image_mode, "original")
+    cfg.zoom = bool(zoom)
     cfg.name, cfg.icon_name, cfg.package, cfg.version = str(name).strip(), str(icon_name).strip(), str(package).strip(), str(version).strip()
     cfg.numeric_version = int(numeric or 0)
     cfg.orientation = ORIENTATION_LABELS.get(orientation_label, "sensorLandscape")
@@ -2035,6 +2058,8 @@ def android_build(*v):
                 md += "  \n" + t("android.images.improved_note", n=st.improved, skipped=st.improved_skipped, failed=st.improved_failed)
             elif st.image_mode == "hd2x":
                 md += "  \n" + t("android.images.hd2x_note", n=st.hd2x_files, cache=int(cfg.hd2x_cache_mb))
+        if st.zoom_hook:
+            md += "  \n" + t("android.zoom_note", name=android.ZOOM_HOOK_NAME)
     if "decompile" in stage_info:
         ok, errors = stage_info["decompile"]  # type: ignore[misc]
         md += "  \n" + t("android.decompile_result", ok=ok, errors=len(errors))
@@ -2920,6 +2945,10 @@ def build_ui() -> gr.Blocks:
                             inputs["out_name"] = gr.Textbox("hd2x", label=t("expert.out_name"), lines=1, max_lines=1)
                             inputs["install_hook"] = gr.Checkbox(True, label=t("expert.install_hook"))
                             inputs["cache_mb"] = gr.Slider(256, 8192, value=1536, step=256, label=t("expert.cache_mb"))
+                        with gr.Row():
+                            zoom_install_btn = gr.Button(t("expert.install_zoom"), size="sm", scale=0, min_width=300)
+                            zoom_remove_btn = gr.Button(t("expert.remove_zoom"), size="sm", scale=0, min_width=240)
+                        gr.Markdown(t("expert.zoom_hint"), elem_classes=["rhd-hint"])
                     with gr.Accordion(t("expert.nr"), open=False):
                         gr.Markdown(t("expert.nr_hint"), elem_classes=["rhd-hint"])
                         with gr.Row():
@@ -3244,6 +3273,7 @@ def build_ui() -> gr.Blocks:
                                 a_bundle = gr.Checkbox(False, label=t("android.cfg.bundle"), visible=android.ANDROID_BUNDLE_ENABLED)
                                 a_arm64 = gr.Checkbox(False, label=t("android.cfg.arm64", sdk=android.ARM64_LEGACY_SDK), visible=False)
                                 a_image_mode = gr.Radio(list(IMAGE_MODE_LABELS), value=list(IMAGE_MODE_LABELS)[0], label=t("android.images.label"), visible=False)
+                                a_zoom = gr.Checkbox(True, label=t("android.cfg.zoom"), info=t("android.cfg.zoom_info"))
                                 a_estimate = gr.Markdown("", elem_classes=["rhd-hint"])
                         with gr.Column(elem_classes=["rhd-step"]):
                             gr.HTML(_step_title(4, t("android.step4_title")))
@@ -3477,6 +3507,8 @@ def build_ui() -> gr.Blocks:
         tv_save.click(video_save, None, tv_save_msg)
         cancel_btn.click(cancel_run, None, status_md, queue=False)
         uninstall_btn.click(uninstall, [inputs["game_root"], inputs["out_name"]], status_md)
+        zoom_install_btn.click(zoom_install, inputs["game_root"], status_md)
+        zoom_remove_btn.click(zoom_remove, inputs["game_root"], status_md)
         restore_btn.click(restore, inputs["game_root"], status_md)
         save_btn.click(save_cfg, input_list, cfg_msg, queue=False)
         load_btn.click(load_cfg, None, input_list + [cfg_msg], queue=False)
@@ -3532,7 +3564,7 @@ def build_ui() -> gr.Blocks:
         t_target.change(tl_refresh, [t_root, t_target], tl_refresh_outputs, queue=False)
         # ouverture directe d'un onglet / d'un jeu par l'URL (?tab=tab_tools&sub=sub_rpa&game=…)
         a_cfg_fields = [a_name, a_icon_name, a_package, a_version, a_numeric, a_orientation, a_internet, a_videos, a_budget, a_icon, a_bundle,
-                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_arm64, a_image_mode, a_estimate]
+                        a_decompile, a_skip_rpa, a_prefer_rpyc, a_data_mode, a_ext_audio, a_arm64, a_image_mode, a_zoom, a_estimate]
         a_analyze_outputs = [a_summary, a_step2, a_step2_hint, a_sdk, a_env_md, a_step3, a_step3_hint, a_step4, a_step4_hint] + a_cfg_fields
         u_sel_inputs = [u_min_side, u_include, u_exclude, u_containers, u_skip_ui, u_fallback, u_chunk, u_threads]
         u_analyze_outputs = [u_summary, u_step2, u_step2_hint, u_step3, u_step3_hint, u_step4, u_step4_hint, u_containers, u_sel_md, u_skipped_md, u_bk_state]

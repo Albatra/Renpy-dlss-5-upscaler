@@ -88,6 +88,10 @@ Puis double-cliquez sur **`RenPyHD.exe`** (ou `run.bat`). Une console s'ouvre, p
    (remet le jeu d'origine). En jeu, **Maj+J** alterne HD → original → écran partagé avant | après (la ligne de séparation
    suit la souris ; chaque image est coupée à la même fraction de sa propre largeur, pour comparer au pixel près) et
    **Maj+H** affiche les statistiques (nombre d'images remplacées).
+   **Zoom en jeu** en option (Mode expert › *Installer le zoom en jeu (PC)*, et case de l'étape 3 de l'onglet Android) :
+   double-clic / double-appui = zoom d'un cran centré sur le pointeur (1x → 2x → 3x), glisser = déplacement, Ctrl + molette
+   = zoom continu, Maj+Z = cran suivant — seuls décors et personnages bougent, la fenêtre de dialogue reste en place ;
+   pas de pincement.
 
 Un jeu déjà amélioré est reconnu : les étapes s'adaptent (Jouer / Comparer / Désinstaller directement).
 

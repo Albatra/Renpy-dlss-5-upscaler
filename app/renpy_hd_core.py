@@ -43,6 +43,8 @@ except Exception:  # pragma: no cover - usage hors application
         return key
 HOOK_NAME = "zz_dlss_hd.rpy"
 HOOK_TEMPLATE = APP_DIR / HOOK_NAME
+ZOOM_HOOK_NAME = "renpyhd_zoom.rpy"                 # zoom en jeu (double-appui / glisser ; PC : double-clic, Ctrl+molette, Maj+Z) — fichier autonome
+ZOOM_HOOK_TEMPLATE = APP_DIR / ZOOM_HOOK_NAME
 BACKUP_DIR = "_dlss_backup"
 BACKUP_MANIFEST = "manifest.json"
 FACTOR_FILE = "factor.txt"
@@ -1087,6 +1089,26 @@ def install_hook(game: Path, out_name: str, cache_mb: int) -> Path:
     return target
 
 
+def install_zoom_hook(game: Path) -> Path:
+    """Copie renpyhd_zoom.rpy (zoom en jeu, fichier autonome) dans game\\ ; un .rpyc périmé est retiré."""
+    target = game / ZOOM_HOOK_NAME
+    shutil.copy2(ZOOM_HOOK_TEMPLATE, target)
+    rpyc = target.with_suffix(".rpyc")
+    if rpyc.exists():
+        rpyc.unlink()
+    return target
+
+
+def uninstall_zoom_hook(game: Path) -> list[str]:
+    done = []
+    for name in (ZOOM_HOOK_NAME, ZOOM_HOOK_NAME + "c"):
+        f = game / name
+        if f.exists():
+            f.unlink()
+            done.append(f"Fichier supprimé : {f}")
+    return done
+
+
 def uninstall_mod(game_root: str, out_name: str) -> list[str]:
     game = find_game_dir(game_root)
     done = []
@@ -1094,7 +1116,7 @@ def uninstall_mod(game_root: str, out_name: str) -> list[str]:
     if out_dir.is_dir():
         shutil.rmtree(out_dir)
         done.append(f"Dossier supprimé : {out_dir}")
-    for name in (HOOK_NAME, HOOK_NAME + "c"):
+    for name in (HOOK_NAME, HOOK_NAME + "c", ZOOM_HOOK_NAME, ZOOM_HOOK_NAME + "c"):
         f = game / name
         if f.exists():
             f.unlink()

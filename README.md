@@ -41,6 +41,9 @@ setup.bat
 5. **Improve the game** — one button, a progress bar, then **Play**. The result lives in `game\hd2x\`; *Uninstall* puts everything back.
    In game, **Shift+J** cycles HD → original → before | after split screen (the divider follows the mouse; every image is
    split at the same fraction of its own width, for a pixel-exact comparison) and **Shift+H** shows the stats.
+   Optional **in-game zoom** (Expert mode › *Install the in-game zoom (PC)*, also a step-3 box of the Android tab):
+   double-click / double-tap zooms the picture one step around the pointer (1x → 2x → 3x), drag pans, Ctrl + wheel zooms
+   continuously, Shift+Z cycles — only backgrounds and sprites move, the dialogue window stays put; no pinch.
 
 | Steps | Preview | Done |
 |---|---|---|

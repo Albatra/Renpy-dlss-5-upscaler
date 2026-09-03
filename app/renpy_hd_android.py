@@ -53,6 +53,8 @@ ADAPTER_NAME = "zz_renpyhd_android.rpy"
 EXTDATA_HOOK_SRC = APP_DIR / "renpyhd_extdata.rpy"     # hook « données externes » (copié dans game\ de la copie de construction)
 EXTDATA_HOOK_NAME = "zz_renpyhd_extdata.rpy"
 EXTDATA_MANIFEST = "renpyhd_extdata.json"              # manifeste lu par le hook (paquet, fichiers témoins, taille du pack)
+ZOOM_HOOK_SRC = core.ZOOM_HOOK_TEMPLATE                # hook « zoom en jeu » (double-appui, glisser) copié dans game\ de la copie si l'option est cochée
+ZOOM_HOOK_NAME = core.ZOOM_HOOK_NAME
 BUILD_MANIFEST = "build.json"                          # écrit dans android\out\<jeu>\ après chaque construction (gestionnaire « Mes APK »)
 AUDIO_EXTS = (".ogg", ".opus", ".mp3", ".wav", ".flac", ".m4a")
 EXT_AUDIO_THRESHOLD = 200 * 1024 * 1024        # au-delà, l'audio est proposé dans le pack de données
@@ -64,7 +66,8 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 ENGINE_OVERHEAD = 45 * 1024 * 1024          # moteur Ren'Py + bibliothèques natives dans l'APK (≈ 35–55 Mo)
 EXCLUDED_DIRS = {"saves", "cache", "_dlss_backup", "renpyhd_export", "__pycache__"}
 EXCLUDED_DIR_PREFIXES = ("hd2x",)
-EXCLUDED_FILE_PREFIXES = ("zz_dlss_hd.rpy", "zz_renpyhd_tl.rpy", "zz_renpyhd_check.rpy", "zz_renpyhd_extdata.rpy", "renpyhd_extdata.json")
+EXCLUDED_FILE_PREFIXES = ("zz_dlss_hd.rpy", "zz_renpyhd_tl.rpy", "zz_renpyhd_check.rpy", "zz_renpyhd_extdata.rpy", "renpyhd_extdata.json",
+                          "renpyhd_zoom.rpy")     # le zoom en jeu est (ré)écrit depuis le modèle de l'application selon la case de l'étape 3
 ORIENTATIONS = ("sensorLandscape", "portrait", "sensor")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 ANDROID_BUNDLE_ENABLED = True       # app bundle (.aab) pour Ren'Py ≥ 7.4 / 8.x
@@ -872,6 +875,7 @@ class BuildConfig:
     arm64_legacy: bool = False       # jeu Ren'Py 7.0–7.3 : décompiler (unrpyc) et construire avec le SDK ARM64_LEGACY_SDK (arm64-v8a) au lieu du RAPT d'origine
     image_mode: str = "original"     # original | improved (hd2x réduit à la taille d'origine, Lanczos) | hd2x (dossier hd2x complet + hook zz_dlss_hd.rpy)
     hd2x_cache_mb: int = 512         # hd2x : config.image_cache_size_mb écrit dans le hook (1536 sur PC : trop pour un téléphone)
+    zoom: bool = True                # hook renpyhd_zoom.rpy dans l'APK : zoom du calque master par double-appui, déplacement au doigt
 
 
 IMAGE_MODES = ("original", "improved", "hd2x")
@@ -1015,6 +1019,7 @@ class StageResult:
     improved_skipped: int = 0             # déjà présentes (reprise)
     improved_failed: int = 0
     hd2x_files: int = 0
+    zoom_hook: bool = False               # renpyhd_zoom.rpy écrit dans la copie de construction
 
 
 _HD_ALT_EXTS = (".webp", ".png", ".jpg", ".jpeg")
@@ -1341,6 +1346,11 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
         (build_dir / "game" / core.HOOK_NAME).write_text(core.render_hook("hd2x", int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB)), encoding="utf-8")
         res.hd2x_files = n
         log(T("android.log.hd2x_packed", n=n, size=core.human_size(a.hd2x_bytes), cache=int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB)))
+    if cfg.zoom and ZOOM_HOOK_SRC.is_file():
+        # zoom en jeu : hook autonome dans l'APK (double-appui = zoom centré, glisser = déplacement, calque master seulement)
+        shutil.copy2(ZOOM_HOOK_SRC, build_dir / "game" / ZOOM_HOOK_NAME)
+        res.zoom_hook = True
+        log(T("android.log.zoom_hook", name=ZOOM_HOOK_NAME))
     if external and pack_dir is not None:
         # hook + manifeste dans la copie de construction (donc dans l'APK), mode d'emploi dans le pack
         shutil.copy2(EXTDATA_HOOK_SRC, build_dir / "game" / EXTDATA_HOOK_NAME)
@@ -1907,6 +1917,7 @@ def write_build_manifest(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, st:
         "sdk_family": sdk.family, "built": time.time(), "built_text": time.strftime("%Y-%m-%d %H:%M"),
         "data_mode": cfg.data_mode, "image_mode": st.image_mode if st else "original", "improved": st.improved if st else 0,
         "hd2x_files": st.hd2x_files if st else 0, "hd2x_cache_mb": int(cfg.hd2x_cache_mb) if cfg.image_mode == "hd2x" else 0,
+        "zoom": bool(st.zoom_hook) if st else False,
         "apk": main.name if main else "", "apk_bytes": main.stat().st_size if main else 0,
         "files": [f.name for f in r.files], "bundle": bool(cfg.bundle), "elapsed": r.elapsed,
         "pack_dir": st.pack_dir.name if (st and st.pack_dir) else "", "pack_files": st.pack_files if st else 0, "pack_bytes": st.pack_bytes if st else 0,
