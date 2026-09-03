@@ -423,6 +423,9 @@ init -999 python:
         seen = set()
         rv = []
         for fn in list(_rhd_orig_list()) + sorted(renpy.game.script.translator.file_translates.keys()):
+            norm = fn.replace("\\", "/")
+            if "/tl/" in norm or norm.startswith("tl/"):
+                continue
             if fn not in seen and not _rhd_os.path.basename(fn).startswith("zz_renpyhd_"):
                 seen.add(fn)
                 rv.append(fn)
@@ -568,16 +571,28 @@ init 1600 python:
 
 LANG_HOOK_SRC = '''# zz_renpyhd_lang.rpy — installé par RenPyHD (traduction « %(lang)s »).
 # Sans ce fichier, le jeu reste dans sa langue d'origine : le supprimer suffit à tout annuler.
-# Au premier lancement, la langue « %(lang)s » est sélectionnée ; Maj+L bascule entre la traduction et l'original.
-define config.default_language = "%(lang)s"   # RENPYHD:LANG
+# À chaque lancement, la langue « %(lang)s » est appliquée tant que le joueur n'a pas choisi lui-même
+# (Maj+L bascule entre la traduction et l'original, et ce choix est mémorisé dans persistent._renpyhd_lang_choice).
+# config.default_language n'a d'effet qu'au tout premier lancement (et pas du tout sur Ren'Py 7.1) : on ne s'y fie pas.
 
 init 999 python:
-    if getattr(persistent, "_renpyhd_lang_applied", None) != "%(lang)s":
-        persistent._renpyhd_lang_applied = "%(lang)s"
-        _preferences.language = "%(lang)s"
+    _renpyhd_lang = "%(lang)s"   # RENPYHD:LANG
+    try:
+        config.default_language = _renpyhd_lang
+    except Exception:
+        pass
+
+    def _renpyhd_apply_language():
+        choice = getattr(persistent, "_renpyhd_lang_choice", None)
+        target = _renpyhd_lang if choice is None else (choice or None)
+        if _preferences.language != target:
+            _preferences.language = target
+
+    _renpyhd_apply_language()
 
     def _renpyhd_toggle_language():
-        target = None if _preferences.language == "%(lang)s" else "%(lang)s"
+        target = None if _preferences.language == _renpyhd_lang else _renpyhd_lang
+        persistent._renpyhd_lang_choice = target or ""
         renpy.change_language(target)
         try:
             renpy.notify(u"Langue : " + (target if target else u"originale"))
@@ -590,6 +605,16 @@ screen renpyhd_language_toggle():
 init 999 python:
     if "renpyhd_language_toggle" not in config.overlay_screens:
         config.overlay_screens.append("renpyhd_language_toggle")
+    # La préférence de langue est lue par Ren'Py après l'init (label _start) : on la ré-applique au démarrage.
+    def _renpyhd_lang_start():
+        _renpyhd_apply_language()
+    try:
+        config.start_callbacks.append(_renpyhd_lang_start)
+    except Exception:
+        try:
+            config.after_load_callbacks.append(_renpyhd_lang_start)
+        except Exception:
+            pass
 '''
 
 
@@ -619,6 +644,7 @@ class GenerateResult:
     runtime: str = ""
     version: str = ""
     error: str = ""
+    post_check: str = ""
 
 
 def _load_manifest(tl_dir: Path) -> dict:
@@ -644,7 +670,8 @@ def tl_status(game_root: str, lang: str) -> dict:
     hook = game / LANG_HOOK
     hook_lang = ""
     if hook.is_file():
-        m = re.search(r'default_language\s*=\s*"([^"]+)"', hook.read_text(encoding="utf-8", errors="ignore"))
+        text = hook.read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r'"([^"]+)"\s*#\s*RENPYHD:LANG', text) or re.search(r'default_language\s*=\s*"([^"]+)"', text)
         hook_lang = m.group(1) if m else "?"
     return {"exists": tl_dir.is_dir(), "ours": bool(manifest), "manifest": manifest, "hook": hook.is_file(), "hook_lang": hook_lang,
             "rpy_files": sum(1 for _ in tl_dir.rglob("*.rpy")) if tl_dir.is_dir() else 0}
@@ -672,6 +699,7 @@ def generate_tl(game_root: str, lang: str, merge: bool, log: Callable[[str], Non
     with_suppress_unlink(info_file)
     tb = root / "traceback.txt"
     tb_before = tb.stat().st_mtime if tb.is_file() else 0.0
+    t_start_rpyc = time.time() - 1.0
     (game / TL_HELPER).write_text(HELPER_SRC, encoding="utf-8")
     try:
         rc, out = run_renpy(rt, ["translate", lang, "--no-todo"], log, cancel=cancel)
@@ -679,6 +707,18 @@ def generate_tl(game_root: str, lang: str, merge: bool, log: Callable[[str], Non
         _remove_helper(game, TL_HELPER)
     result.output = out
     result.elapsed = time.time() - t0
+    # Ren'Py a pu recompiler des .rpyc d'autres langues sous game/tl pendant ce lancement (Ren'Py 7.1 : noms de nœuds
+    # en chemin complet, doublons « Name … is defined twice ») : on les retire quand la source .rpy est à côté,
+    # Ren'Py les recompile proprement au prochain démarrage ; idem pour ceux de la langue générée.
+    tl_root = game / "tl"
+    removed = 0
+    if tl_root.is_dir():
+        for rpyc in list(tl_root.rglob("*.rpyc")):
+            if rpyc.with_suffix(".rpy").is_file() and (rpyc.stat().st_mtime > t_start_rpyc or rpyc.is_relative_to(tl_dir)):
+                with_suppress_unlink(rpyc)
+                removed += 1
+    if removed:
+        log(f"{removed} fichier(s) .rpyc recompilés sous game/tl retirés (Ren'Py les régénère au prochain lancement).")
     if info_file.is_file():
         try:
             info = json.loads(info_file.read_text(encoding="utf-8"))
@@ -713,6 +753,21 @@ def generate_tl(game_root: str, lang: str, merge: bool, log: Callable[[str], Non
     _save_manifest(tl_dir, manifest)
     for n in (TL_HELPER + "c",):
         with_suppress_unlink(game / n)
+    if not cancel.is_set():
+        try:
+            chk = check_translation(str(root), lang, log, cancel)
+            tb = chk.get("traceback") or ""
+            if tb:
+                result.error = ("Les textes ont été extraits, mais le jeu ne démarre plus (traceback.txt) — vérifiez avant d'installer :\n"
+                                + tb[-1200:])
+            else:
+                result.post_check = f"lancement de contrôle OK (Ren'Py {str(chk.get('version', '')).replace(chr(39), '')}, {chk.get('dialogue_blocks', 0)} bloc(s))"
+        except Exception as exc:
+            result.post_check = f"lancement de contrôle impossible : {exc}"
+        # le lancement de contrôle a compilé la nouvelle langue (et parfois d'autres langues) : on repart propre
+        for rpyc in list(tl_root.rglob("*.rpyc")) if tl_root.is_dir() else []:
+            if rpyc.with_suffix(".rpy").is_file() and (rpyc.stat().st_mtime > t_start_rpyc or rpyc.is_relative_to(tl_dir)):
+                with_suppress_unlink(rpyc)
     return result
 
 
