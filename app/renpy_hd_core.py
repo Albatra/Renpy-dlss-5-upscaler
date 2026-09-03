@@ -654,8 +654,16 @@ def build_game_plan(run: RunSettings, scan: ScanSettings, dlss: DlssSettings, vi
         # On prend donc l'union des fichiers cités dans les scripts et de toutes les images du dossier.
         refs, vrefs = collect_refs(game, run.out_name)
         refs_all, vrefs_all = collect_all_files(game, load_rpas(game) if scan.use_rpa else [], run.out_name)
-        refs = sorted(set(refs) | set(refs_all))
-        vrefs = sorted(set(vrefs) | set(vrefs_all))
+        # Même fichier sous deux formes (« scene1/a.webp » cité dans les scripts, « images/scene1/a.webp » trouvé
+        # dans le dossier) : on garde la forme des scripts pour ne pas le traiter deux fois.
+        def _merge(scripted: list[str], found: list[str]) -> list[str]:
+            keep = set(scripted)
+            for r in found:
+                if r not in keep and not (r.startswith("images/") and r[len("images/"):] in keep):
+                    keep.add(r)
+            return sorted(keep)
+        refs = _merge(refs, refs_all)
+        vrefs = _merge(vrefs, vrefs_all)
     else:
         refs, vrefs = collect_all_files(game, load_rpas(game) if scan.use_rpa else [], run.out_name)
     # Vidéos : citations dans les scripts + dossiers movies/ videos/ video/ (+ entrées .rpa)
