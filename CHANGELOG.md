@@ -8,6 +8,14 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
 - In-game before/after (`zz_dlss_hd.rpy`): **Shift+J** cycles HD → original → split screen (the divider follows the mouse;
   each image is split at the same fraction of its own width), **Shift+H** shows the stats. Documented in Help (six
   languages) and the READMEs.
+- **Pipelined image processing** (Expert mode › *Pipelined processing (GPU fed continuously)*, on by default, plus
+  *Pipeline CPU threads*, 0 = half the logical cores): the tool's `convert_images` decodes, renders and encodes one image
+  at a time, so the GPU idled during every 4K JPEG/PNG/WebP encode. RenPyHD now keeps **one DLSS session** fed by a
+  decode pool (bounded prefetch of 8 frames) and drains it into an encode/write pool, calling the native worker strictly
+  one frame at a time. Same options, same output names, one session per output size, the tool's per-session *feature 18*
+  verification (ReShade + worker logs) with the same failure reports; anything unexpected falls back to the tool's own
+  path for the remaining images (logged). Videos are unchanged; outputs are pixel-identical to the classic path.
+  Untick the option to get the previous behaviour.
 
 ### Tools › Android (APK)
 - New **Android (APK)** module: builds an APK of a Ren'Py game with the official **Ren'Py SDK + RAPT**, driven from their

@@ -88,7 +88,7 @@ setup.bat
 - **100 % local**: the interface listens on `127.0.0.1` only. The only network access is the download done by `setup.bat`.
 - **Interface languages**: English, French, Spanish, German, Russian, Brazilian Portuguese (menu at the top right).
 
-Expert mode exposes every engine setting (Neural Rendering style, intensity, skin structure, DLSS model, formats, video codec…). Details in the in-app *Help* tab and in [`app/README.md`](app/README.md).
+Expert mode exposes every engine setting (Neural Rendering style, intensity, skin structure, DLSS model, formats, video codec…) and the **pipelined processing** switch (one DLSS session fed continuously by decode/encode thread pools — on by default, pixel-identical outputs, several times faster on images). Details in the in-app *Help* tab and in [`app/README.md`](app/README.md).
 
 ## Credits and license
 

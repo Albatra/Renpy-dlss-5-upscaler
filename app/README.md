@@ -93,6 +93,14 @@ format de sortie par type de source, qualité, métadonnées ; plus les nôtres 
 préfixes exclus (`gui/` par défaut), regex d'inclusion / exclusion, lecture des `.rpa`, taille de lot, limite, retraitement,
 dimensions min/max, installation automatique du hook, `config.image_cache_size_mb` écrit dans le hook, simulation (dry-run).
 Les préréglages (Visages / Équilibré / Fidèle / Cinéma / Portrait-peau, étape 3) remplissent les curseurs NR.
+
+**Traitement en pipeline (GPU alimenté en continu)** (Mode expert › Sélection des images, coché par défaut) : le
+`convert_images` de l'outil décode, rend puis encode chaque image l'une après l'autre, si bien que le GPU attend chaque
+encodage JPEG/PNG/WebP 4K. RenPyHD garde **une seule session DLSS** alimentée par un pool de décodage (8 images d'avance)
+et vidée par un pool d'encodage ; le worker natif reste appelé une image à la fois. Mêmes options, mêmes noms de sortie,
+une session par taille de sortie, même vérification « feature 18 » par session que l'outil (journal ReShade + worker) et
+mêmes rapports d'échec ; en cas d'imprévu, le reste du lot est confié au chemin classique (ligne dans le journal). Sorties
+identiques au pixel près. « Fils CPU du pipeline » : 0 = la moitié des cœurs logiques. Les vidéos ne sont pas concernées.
 « Enregistrer / Charger la configuration » utilise `app\renpy_hd_config.json` (les choix de listes y sont stockés sous forme
 de clés internes, indépendantes de la langue ; la langue de l'interface y est enregistrée sous `ui_lang`).
 

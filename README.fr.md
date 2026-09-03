@@ -33,7 +33,9 @@ Les ressources des jeux restent la propriété de leurs auteurs.
   moteur Ren'Py du jeu, export en fichiers `.txt` numérotés pour le service de traduction de votre choix, import tolérant
   avec relecture, installation d'un hook de langue avec bascule **Maj+L**).
 * **Mode expert** : tous les réglages du moteur (style / preset / intensité NR, local tone & structure, skin structure,
-  modèle DLSS J/K/L/M, formats et qualité de sortie, filtres, codec vidéo, CRF, plafond, audio…).
+  modèle DLSS J/K/L/M, formats et qualité de sortie, filtres, codec vidéo, CRF, plafond, audio…) et le **traitement en
+  pipeline** (une seule session DLSS alimentée en continu par des pools de décodage / encodage — actif par défaut,
+  sorties identiques au pixel près, plusieurs fois plus rapide sur les images).
 
 | Flux en cinq étapes | Aperçu avant/après | Fin du traitement |
 |---|---|---|
