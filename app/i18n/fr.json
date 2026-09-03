@@ -262,6 +262,9 @@
   "expert.webp_as": "Sources WebP → format de sortie",
   "expert.selection": "Sélection des images et analyse",
   "expert.chunk": "Taille de lot (images par appel DLSS)",
+  "expert.pipeline": "Traitement en pipeline (GPU alimenté en continu)",
+  "expert.pipeline_info": "Décodage et encodage en parallèle autour d'une seule session DLSS : nettement plus rapide, sorties identiques. Décochez pour le chemin classique de l'outil.",
+  "expert.cpu_threads": "Fils CPU du pipeline (0 = auto : moitié des cœurs)",
   "expert.limit": "Limiter à N images (0 = tout) — utile pour un test",
   "expert.path_filter": "Filtre de chemin (sous-chaîne)",
   "expert.extensions": "Extensions à inclure",
@@ -488,6 +491,8 @@
   "core.err.same_dir": "Le dossier de sortie doit être différent du dossier source.",
   "core.err.tool_missing": "DLSS 5 Visual Enhancer introuvable dans {root}",
   "core.msg.nothing": "Rien à traiter : tout est déjà fait ou filtré.",
+  "core.msg.pipeline_on": "Pipeline : décodage/encodage sur {threads} fils, GPU alimenté en continu (une session DLSS par taille de sortie).",
+  "core.msg.pipeline_off": "Pipeline désactivé : chemin classique de l'outil (image par image).",
   "core.msg.cancel_requested": "Annulation demandée.",
   "core.msg.cancel_requested_err": "Annulation demandée ({err})",
   "core.dialog.pick_folder": "Choisir un dossier",
@@ -782,5 +787,6 @@
   "android.log.improve_progress": "Images améliorées : {i} / {n} ({elapsed})",
   "android.log.improve_done": "Images améliorées : {done} générées, {skipped} déjà présentes, {failed} échecs, {size}",
   "android.log.improve_failed": "Image améliorée impossible (originale gardée ?) : {file}",
-  "android.log.hd2x_packed": "Dossier hd2x dans le pack : {n} fichiers ({size}) ; hook zz_dlss_hd.rpy écrit avec cache {cache} Mo"
+  "android.log.hd2x_packed": "Dossier hd2x dans le pack : {n} fichiers ({size}) ; hook zz_dlss_hd.rpy écrit avec cache {cache} Mo",
+  "report.scan_auto": "images citées dans les scripts + images automatiques du dossier images/"
 }

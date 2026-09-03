@@ -161,6 +161,7 @@ def _settings_from(v: dict):
         mode=mode, game_root=_clean_path(v["game_root"]), out_name=(str(v["out_name"]).strip().strip("/\\") or "hd2x"),
         input_dir=_clean_path(v["input_dir"]), output_dir=_clean_path(v["output_dir"]),
         install_hook=bool(v["install_hook"]), cache_mb=int(v["cache_mb"]), chunk=int(v["chunk"]), dry_run=bool(v["dry_run"]),
+        pipeline=bool(v.get("pipeline", True)), cpu_threads=int(v.get("cpu_threads") or 0),
     )
     video_nr = None
     if not bool(v.get("video_share_nr", True)):
@@ -218,7 +219,7 @@ def _info_markdown(info: core.GameInfo | None, plan: core.Plan, run: core.RunSet
         lines += [t("report.folder", src=run.input_dir, dst=run.output_dir), t("report.folder_images", n=plan.total_refs)]
     eff = core.effective_factor(mode, factor)
     if info is not None:
-        scan_label = t("report.scan_scripts") if plan.scan_mode_used == "scripts" else t("report.scan_all")
+        scan_label = {"scripts": t("report.scan_scripts"), "auto": t("report.scan_auto")}.get(plan.scan_mode_used, t("report.scan_all"))
         lines.append(t("report.scan", scan=scan_label, videos=plan.video_refs, size=core.human_size(plan.video_bytes)))
         if plan.video_infos:
             infos = [i for i in plan.video_infos.values() if i.ok]
@@ -2566,6 +2567,9 @@ def build_ui() -> gr.Blocks:
                             inputs["png_as"] = gr.Dropdown(list(core.RENPY_FORMATS), value="PNG", label=t("expert.png_as"))
                             inputs["webp_as"] = gr.Dropdown(list(core.RENPY_FORMATS), value="WebP", label=t("expert.webp_as"))
                     with gr.Accordion(t("expert.selection"), open=False):
+                        with gr.Row():
+                            inputs["pipeline"] = gr.Checkbox(True, label=t("expert.pipeline"), info=t("expert.pipeline_info"), scale=3)
+                            inputs["cpu_threads"] = gr.Slider(0, 32, value=0, step=1, label=t("expert.cpu_threads"), scale=2)
                         with gr.Row():
                             inputs["chunk"] = gr.Slider(10, 1000, value=300, step=10, label=t("expert.chunk"))
                             inputs["limit"] = gr.Number(0, precision=0, label=t("expert.limit"))

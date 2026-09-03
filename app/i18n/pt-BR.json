@@ -262,6 +262,9 @@
   "expert.webp_as": "Origens WebP → formato de saída",
   "expert.selection": "Seleção de imagens e análise",
   "expert.chunk": "Tamanho do lote (imagens por chamada DLSS)",
+  "expert.pipeline": "Processamento em pipeline (GPU alimentada continuamente)",
+  "expert.pipeline_info": "Decodificação e codificação em paralelo em torno de uma única sessão DLSS: muito mais rápido, saídas idênticas. Desmarque para o caminho clássico da ferramenta.",
+  "expert.cpu_threads": "Threads de CPU do pipeline (0 = automático: metade dos núcleos)",
   "expert.limit": "Limitar a N imagens (0 = todas) — útil para um teste",
   "expert.path_filter": "Filtro de caminho (substring)",
   "expert.extensions": "Extensões a incluir",
@@ -488,6 +491,8 @@
   "core.err.same_dir": "A pasta de saída deve ser diferente da pasta de origem.",
   "core.err.tool_missing": "DLSS 5 Visual Enhancer não encontrado em {root}",
   "core.msg.nothing": "Nada a processar: tudo já foi feito ou filtrado.",
+  "core.msg.pipeline_on": "Pipeline: decodificação/codificação em {threads} threads, GPU alimentada continuamente (uma sessão DLSS por tamanho de saída).",
+  "core.msg.pipeline_off": "Pipeline desativado: caminho clássico da ferramenta (imagem por imagem).",
   "core.msg.cancel_requested": "Cancelamento solicitado.",
   "core.msg.cancel_requested_err": "Cancelamento solicitado ({err})",
   "core.dialog.pick_folder": "Escolher uma pasta",
@@ -782,5 +787,6 @@
   "android.log.improve_progress": "Imagens melhoradas: {i} / {n} ({elapsed})",
   "android.log.improve_done": "Imagens melhoradas: {done} geradas, {skipped} já presentes, {failed} falhas, {size}",
   "android.log.improve_failed": "Imagem melhorada impossível (original mantida?): {file}",
-  "android.log.hd2x_packed": "Pasta hd2x no pacote: {n} arquivos ({size}); hook zz_dlss_hd.rpy escrito com cache {cache} MB"
+  "android.log.hd2x_packed": "Pasta hd2x no pacote: {n} arquivos ({size}); hook zz_dlss_hd.rpy escrito com cache {cache} MB",
+  "report.scan_auto": "imagens citadas nos scripts + imagens automáticas da pasta images/"
 }

@@ -262,6 +262,9 @@
   "expert.webp_as": "WebP-Quellen → Ausgabeformat",
   "expert.selection": "Bildauswahl und Analyse",
   "expert.chunk": "Stapelgröße (Bilder pro DLSS-Aufruf)",
+  "expert.pipeline": "Pipeline-Verarbeitung (GPU wird kontinuierlich versorgt)",
+  "expert.pipeline_info": "Dekodierung und Kodierung laufen parallel um eine einzige DLSS-Sitzung: deutlich schneller, identische Ausgaben. Abwählen für den klassischen Pfad des Tools.",
+  "expert.cpu_threads": "CPU-Threads der Pipeline (0 = automatisch: die Hälfte der Kerne)",
   "expert.limit": "Auf N Bilder begrenzen (0 = alle) — nützlich für einen Test",
   "expert.path_filter": "Pfadfilter (Teilzeichenkette)",
   "expert.extensions": "Einzuschließende Erweiterungen",
@@ -488,6 +491,8 @@
   "core.err.same_dir": "Der Ausgabeordner muss sich vom Quellordner unterscheiden.",
   "core.err.tool_missing": "DLSS 5 Visual Enhancer nicht gefunden in {root}",
   "core.msg.nothing": "Nichts zu verarbeiten: alles ist bereits erledigt oder gefiltert.",
+  "core.msg.pipeline_on": "Pipeline: Dekodierung/Kodierung auf {threads} Threads, GPU kontinuierlich versorgt (eine DLSS-Sitzung pro Ausgabegröße).",
+  "core.msg.pipeline_off": "Pipeline deaktiviert: klassischer Pfad des Tools (Bild für Bild).",
   "core.msg.cancel_requested": "Abbruch angefordert.",
   "core.msg.cancel_requested_err": "Abbruch angefordert ({err})",
   "core.dialog.pick_folder": "Ordner wählen",
@@ -782,5 +787,6 @@
   "android.log.improve_progress": "Verbesserte Bilder: {i} / {n} ({elapsed})",
   "android.log.improve_done": "Verbesserte Bilder: {done} erzeugt, {skipped} bereits vorhanden, {failed} Fehler, {size}",
   "android.log.improve_failed": "Verbessertes Bild nicht möglich (Original behalten?): {file}",
-  "android.log.hd2x_packed": "hd2x-Ordner im Paket: {n} Dateien ({size}); Hook zz_dlss_hd.rpy mit Cache {cache} MB geschrieben"
+  "android.log.hd2x_packed": "hd2x-Ordner im Paket: {n} Dateien ({size}); Hook zz_dlss_hd.rpy mit Cache {cache} MB geschrieben",
+  "report.scan_auto": "in Skripten referenzierte Bilder + automatische Bilder aus dem Ordner images/"
 }

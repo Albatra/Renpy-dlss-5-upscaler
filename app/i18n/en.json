@@ -262,6 +262,9 @@
   "expert.webp_as": "WebP sources → output format",
   "expert.selection": "Image selection and analysis",
   "expert.chunk": "Batch size (images per DLSS call)",
+  "expert.pipeline": "Pipelined processing (GPU fed continuously)",
+  "expert.pipeline_info": "Decoding and encoding run in parallel around a single DLSS session: much faster, identical outputs. Untick for the tool's classic path.",
+  "expert.cpu_threads": "Pipeline CPU threads (0 = auto: half the cores)",
   "expert.limit": "Limit to N images (0 = all) — useful for a test",
   "expert.path_filter": "Path filter (substring)",
   "expert.extensions": "Extensions to include",
@@ -488,6 +491,8 @@
   "core.err.same_dir": "The output folder must differ from the source folder.",
   "core.err.tool_missing": "DLSS 5 Visual Enhancer not found in {root}",
   "core.msg.nothing": "Nothing to process: everything is already done or filtered out.",
+  "core.msg.pipeline_on": "Pipeline: decode/encode on {threads} threads, GPU fed continuously (one DLSS session per output size).",
+  "core.msg.pipeline_off": "Pipeline disabled: the tool's classic path (one image at a time).",
   "core.msg.cancel_requested": "Cancellation requested.",
   "core.msg.cancel_requested_err": "Cancellation requested ({err})",
   "core.dialog.pick_folder": "Choose a folder",
@@ -782,5 +787,6 @@
   "android.log.improve_progress": "Improved images: {i} / {n} ({elapsed})",
   "android.log.improve_done": "Improved images: {done} generated, {skipped} already present, {failed} failures, {size}",
   "android.log.improve_failed": "Improved image failed (original kept?): {file}",
-  "android.log.hd2x_packed": "hd2x folder in the pack: {n} files ({size}); zz_dlss_hd.rpy hook written with cache {cache} MB"
+  "android.log.hd2x_packed": "hd2x folder in the pack: {n} files ({size}); zz_dlss_hd.rpy hook written with cache {cache} MB",
+  "report.scan_auto": "images referenced in scripts + automatic images from the images/ folder"
 }

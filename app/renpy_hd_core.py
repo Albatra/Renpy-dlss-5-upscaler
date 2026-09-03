@@ -243,6 +243,8 @@ class RunSettings:
     cache_mb: int = 1536
     chunk: int = 300
     dry_run: bool = False
+    pipeline: bool = True      # chemin rapide : une session DLSS alimentée en continu (décodage/encodage en parallèle)
+    cpu_threads: int = 0       # fils CPU du chemin rapide (0 = automatique : moitié des cœurs logiques)
 
 
 # ----------------------------------------------------------------------------
@@ -643,9 +645,17 @@ def build_game_plan(run: RunSettings, scan: ScanSettings, dlss: DlssSettings, vi
         info.hd_factor = (out_dir / FACTOR_FILE).read_text(encoding="utf-8", errors="ignore").strip()
     rpas = load_rpas(game) if scan.use_rpa else []
     scripts_present = has_scripts(game)
-    mode_used = scan.scan_mode if scan.scan_mode in ("scripts", "all") else ("scripts" if scripts_present else "all")
+    mode_used = scan.scan_mode if scan.scan_mode in ("scripts", "all") else ("auto" if scripts_present else "all")
     if mode_used == "scripts":
         refs, vrefs = collect_refs(game, run.out_name)
+    elif mode_used == "auto":
+        # Ren'Py définit automatiquement une image pour chaque fichier de images/ (config.automatic_images) :
+        # « show ae1 » affiche images/scene1/ae1.webp sans que le nom de fichier apparaisse dans les scripts.
+        # On prend donc l'union des fichiers cités dans les scripts et de toutes les images du dossier.
+        refs, vrefs = collect_refs(game, run.out_name)
+        refs_all, vrefs_all = collect_all_files(game, load_rpas(game) if scan.use_rpa else [], run.out_name)
+        refs = sorted(set(refs) | set(refs_all))
+        vrefs = sorted(set(vrefs) | set(vrefs_all))
     else:
         refs, vrefs = collect_all_files(game, load_rpas(game) if scan.use_rpa else [], run.out_name)
     # Vidéos : citations dans les scripts + dossiers movies/ videos/ video/ (+ entrées .rpa)
@@ -1301,6 +1311,326 @@ def _image_options(images_mod, dlss: DlssSettings, out_fmt: str, factor: float):
     )
 
 
+# ----------------------------------------------------------------------------
+# Chemin rapide : pipeline décodage → GPU (une seule session DLSS) → encodage
+# ----------------------------------------------------------------------------
+# convert_images de l'outil est une boucle séquentielle par image (décodage, DLSS, encodage) :
+# le GPU attend l'encodage JPEG/PNG/WebP 4K (100 ms à plus d'une seconde) entre deux images.
+# Ici : un pool de décodage remplit une file bornée en avance, le fil appelant enchaîne les
+# session.process() (protocole du worker : une image à la fois), un pool d'encodage écrit les
+# fichiers. Les sémantiques de l'outil sont conservées : mêmes options, mêmes noms de sortie,
+# une session par taille de sortie, vérification « feature 18 » par session (journal ReShade +
+# journal du worker) avec suppression des sorties du lot si elle échoue, rapports de diagnostic.
+PIPELINE_PREFETCH = 8          # images décodées en avance du GPU (≈ 10 Mo par image 1080p)
+
+
+def default_cpu_threads() -> int:
+    return max(2, min(16, (os.cpu_count() or 4) // 2))
+
+
+@dataclass
+class PipelineBatch:
+    """Résultat du chemin rapide : ce qui a été traité + ce qu'il reste à confier à convert_images."""
+    successes: list = field(default_factory=list)      # ImageConversionResult de l'outil
+    failures: list = field(default_factory=list)       # ImageConversionFailure de l'outil
+    cancelled: bool = False
+    remaining: list[Path] = field(default_factory=list)   # non traités (repli sur convert_images)
+    fallback_reason: str = ""
+    sessions: int = 0
+    zip_path: str | None = None
+
+
+def pipeline_convert_images(
+    tool: dict[str, object],
+    paths: list[Path],
+    options,
+    progress: Callable[[float, str], None] | None = None,
+    threads: int = 0,
+) -> PipelineBatch:
+    """Équivalent pipeliné de images.convert_images (mêmes sorties, mêmes vérifications).
+
+    Toute situation imprévue (exception hors des échecs par image gérés comme l'outil) interrompt
+    le chemin rapide : les images restantes sont renvoyées dans `remaining` pour être traitées par
+    convert_images, et `fallback_reason` explique pourquoi."""
+    import cv2
+    import numpy as np
+    from collections import deque
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+
+    images_mod, runtime_mod, video_mod, prepare_mod = tool["images"], tool["runtime"], tool["video"], tool["prepare"]
+    threads = int(threads) if int(threads or 0) > 0 else default_cpu_threads()
+    threads = max(1, min(64, threads))
+    batch = PipelineBatch()
+    paths = [Path(p).resolve() for p in paths]
+    if not paths:
+        return batch
+    neural = images_mod._validate_options(options)
+    prepared = prepare_mod.prepare_runtime()
+    OUTPUTS, LOGS = runtime_mod.OUTPUTS, runtime_mod.LOGS
+    OUTPUTS.mkdir(exist_ok=True)
+    LOGS.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1_000_000:06d}"
+    Failure, Result = images_mod.ImageConversionFailure, images_mod.ImageConversionResult
+    failures_by_index: dict[int, object] = {}
+    successes_by_index: dict[int, object] = {}
+
+    # --- sondage et planification des sorties (identique à l'outil) --------------------------
+    probes: list = []
+    for index, path in enumerate(paths):
+        try:
+            decoded = None
+            if path.suffix.lower() in {*images_mod.RAW_EXTENSIONS, ".svg"}:
+                decoded = images_mod.decode_image(path)
+                height, width = decoded.rgba.shape[:2]
+                if width < 64 or height < 64:
+                    raise ValueError(f"{path.name} is {width}×{height}; DLSS requires both input dimensions to be at least 64 pixels.")
+            else:
+                width, height = images_mod.probe_image(path)
+            ow, oh = video_mod.resolve_output_size(width, height, options.upscaling_factor)
+            probes.append(images_mod._ImageProbe(index, path, width, height, ow, oh, decoded))
+        except Exception as exc:
+            failures_by_index[index] = Failure(str(path), str(exc))
+    planned: dict[int, Path] = {}
+    reserved: set[str] = set()
+    kept = []
+    for probe in probes:
+        output = images_mod._output_path(probe.path, options.output_format, stamp, probe.index, options.rename_mode, options.custom_suffix)
+        key = str(output.resolve()).casefold()
+        try:
+            images_mod.require_available_output(output)
+            if key in reserved:
+                raise FileExistsError(f"More than one input would create {output.name}. Choose Auto naming or use unique input names.")
+        except Exception as exc:
+            failures_by_index[probe.index] = Failure(str(probe.path), str(exc))
+            continue
+        reserved.add(key)
+        planned[probe.index] = output
+        kept.append(probe)
+    probes = kept
+    total = len(probes)
+
+    def finish() -> PipelineBatch:
+        done = set(successes_by_index) | set(failures_by_index)
+        if batch.cancelled:
+            for probe in probes:
+                if probe.index not in done:
+                    failures_by_index[probe.index] = Failure(str(probe.path), "Cancelled before rendering.")
+        else:
+            batch.remaining = [probe.path for probe in probes if probe.index not in done]
+        batch.successes = [successes_by_index[i] for i in sorted(successes_by_index)]
+        batch.failures = [failures_by_index[i] for i in sorted(failures_by_index)]
+        if progress:
+            progress(1.0, "Cancelled" if batch.cancelled else "Complete")
+        return batch
+
+    if not probes:
+        return finish()
+
+    # une session DLSS par taille de sortie (comme l'outil) ; ordre d'entrée conservé dans chaque groupe
+    groups: dict[tuple[int, int], list] = {}
+    for probe in probes:
+        groups.setdefault((probe.output_width, probe.output_height), []).append(probe)
+
+    def decode_task(probe, render_w: int, render_h: int):
+        decoded = probe.decoded or images_mod.decode_image(probe.path)
+        probe.decoded = None
+        render = runtime_mod.resize_fit(decoded.rgba, render_w, render_h)
+        return decoded, render
+
+    def encode_task(output: Path, processed, alpha, ow: int, oh: int, metadata) -> list[str]:
+        if alpha.shape != (oh, ow):
+            alpha = cv2.resize(alpha, (ow, oh), interpolation=cv2.INTER_LANCZOS4)
+        processed[..., 3] = alpha
+        return images_mod.save_image(output, processed, options, metadata)
+
+    processed_total = 0
+    decode_pool = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="renpyhd-decode")
+    encode_pool = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="renpyhd-encode")
+    session = None
+    inflight: list = []       # encodages en cours (bornés à `threads`)
+    segment: list = []        # (probe, result, encode_future, started) de la session courante
+    try:
+        with runtime_mod.active_job() as controller:
+            gpu = dict(prepared.gpu)
+            bundle = prepared.runtime_bundle
+            runtime_mod.validate_gpu_runtime(gpu, bundle)
+            if progress:
+                progress(0.0, f"Starting feature 18 on {gpu['display_name']}")
+            factor, mode = video_mod.resolve_upscaling_mode(neural.upscaling_factor)
+            native = video_mod.resolve_native_settings(neural)
+            for (ow, oh), group in groups.items():
+                cursor = 0
+                while cursor < len(group):
+                    if controller.cancel.is_set():
+                        batch.cancelled = True
+                        break
+                    remaining = group[cursor:]
+                    first = remaining[0]
+                    try:
+                        session = runtime_mod.DLSSFrameSession(
+                            input_width=first.width, input_height=first.height,
+                            output_width=ow, output_height=oh, frame_count=len(remaining),
+                            warmup_frames=neural.warmup_frames, factor=factor, mode=mode,
+                            native_settings=native, gpu=gpu, runtime_bundle=bundle, controller=controller,
+                        )
+                    except Exception as exc:
+                        session = None
+                        controller.terminate_processes()
+                        report = runtime_mod.write_failure_report(
+                            operation="image-batch-dlss-setup", source="; ".join(str(p.path) for p in remaining),
+                            error=exc, gpu=gpu, runtime_bundle=bundle)
+                        for probe in remaining:
+                            failures_by_index[probe.index] = Failure(str(probe.path), f"{exc}\nDiagnostic report: {report}")
+                        break
+                    batch.sessions += 1
+                    rw, rh = session.render_width, session.render_height
+                    motion = np.zeros((rh, rw, 2), dtype=np.float16)
+                    segment = []
+                    interrupted = False
+                    close_error: Exception | None = None
+                    prefetch: deque = deque()
+                    next_index = cursor
+                    sent = 0
+                    while cursor < len(group):
+                        while len(prefetch) < PIPELINE_PREFETCH and next_index < len(group):
+                            prefetch.append(decode_pool.submit(decode_task, group[next_index], rw, rh))
+                            next_index += 1
+                        probe = group[cursor]
+                        started = time.perf_counter()
+                        if controller.cancel.is_set():
+                            batch.cancelled = True
+                            interrupted = True
+                            session.abort()
+                            break
+                        if progress:
+                            progress(processed_total / max(1, total), f"Preparing {probe.path.name}")
+                        try:
+                            decoded, render = prefetch.popleft().result()
+                        except Exception as exc:
+                            failures_by_index[probe.index] = Failure(str(probe.path), str(exc))
+                            cursor += 1
+                            processed_total += 1
+                            session.abort()
+                            interrupted = True
+                            break
+                        try:
+                            processed, _pts = session.process(index=sent, rgba=render, motion=motion, reset=True, pts=sent)
+                            output = planned[probe.index]
+                            result = Result(
+                                str(probe.path), str(output), "", 0.0, str(gpu["display_name"]),
+                                probe.width, probe.height, rw, rh, ow, oh, float(options.upscaling_factor),
+                                str(session.mode["name"]), options.output_format, options.dlss_model_preset,
+                                session.applied_dlss_model_preset, list(decoded.warnings),
+                            )
+                            while len(inflight) >= threads:
+                                wait(inflight, return_when=FIRST_COMPLETED)
+                                inflight = [f for f in inflight if not f.done()]
+                            future = encode_pool.submit(encode_task, output, processed, decoded.alpha, ow, oh, decoded.metadata)
+                            inflight.append(future)
+                            segment.append((probe, result, future, started, images_mod._report_data(decoded)))
+                            del processed, render, decoded
+                            sent += 1
+                        except runtime_mod.Cancelled:
+                            batch.cancelled = True
+                            session.abort()
+                            interrupted = True
+                            break
+                        except Exception as exc:
+                            session.abort()
+                            report = runtime_mod.write_failure_report(
+                                operation="image-render", source=str(probe.path), error=exc, gpu=gpu, runtime_bundle=bundle,
+                                worker_code=session.worker.poll(), worker_logs=session.worker_logs,
+                                reshade_lines=session.reshade_diagnostics())
+                            failures_by_index[probe.index] = Failure(str(probe.path), f"{exc}\nDiagnostic report: {report}")
+                            interrupted = True
+                            cursor += 1
+                            processed_total += 1
+                            break
+                        cursor += 1
+                        processed_total += 1
+                        if progress:
+                            progress(processed_total / total, f"Rendered {probe.path.name}")
+                    # décodages lancés en avance pour une session interrompue : on les laisse finir en arrière-plan
+                    for fut in prefetch:
+                        fut.cancel()
+                    prefetch.clear()
+                    if not segment and interrupted:
+                        if batch.cancelled:
+                            break
+                        continue
+                    if not interrupted:
+                        try:
+                            session.close()
+                        except Exception as exc:
+                            close_error = exc
+                    # --- vérification « feature 18 » de la session (journal ReShade + worker), comme l'outil ---
+                    try:
+                        if close_error:
+                            raise close_error
+                        evidence = runtime_mod.verify_feature_18(session.worker_logs, session.reshade_log_text())
+                        for probe, result, future, item_started, _report in segment:
+                            result.warnings.extend(future.result())
+                            result.elapsed_seconds = time.perf_counter() - item_started
+                        for probe, result, _future, _started, report_data in segment:
+                            result.report_path = images_mod._write_report(result, options, report_data, gpu, session, evidence)
+                            successes_by_index[probe.index] = result
+                    except Exception as exc:
+                        report = runtime_mod.write_failure_report(
+                            operation="image-batch-verification", source="; ".join(str(p.path) for p, *_ in segment),
+                            error=exc, gpu=gpu, runtime_bundle=bundle, worker_code=session.worker.poll(),
+                            worker_logs=session.worker_logs, reshade_lines=session.reshade_diagnostics())
+                        failure = f"{exc}\nDiagnostic report: {report}"
+                        for probe, result, future, _started, _report in segment:
+                            if not future.done():
+                                future.cancel()
+                            with suppress(Exception):
+                                future.result()
+                            with suppress(OSError):
+                                Path(result.output_path).unlink(missing_ok=True)
+                            failures_by_index[probe.index] = Failure(str(probe.path), failure)
+                    segment = []
+                    session = None
+                    if batch.cancelled:
+                        break
+                if batch.cancelled:
+                    break
+    except Exception as exc:
+        # Imprévu (protocole, pool, verrou GPU…) : on rend la main à convert_images pour le reste.
+        batch.fallback_reason = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+        if session is not None:
+            with suppress(Exception):
+                session.abort()
+        for probe, result, future, _started, _report in segment:
+            with suppress(Exception):
+                future.result()
+            with suppress(OSError):
+                Path(result.output_path).unlink(missing_ok=True)
+    finally:
+        decode_pool.shutdown(wait=True, cancel_futures=True)
+        encode_pool.shutdown(wait=True, cancel_futures=True)
+    return finish()
+
+
+def _convert_images_auto(tool: dict[str, object], paths: list[Path], options, progress, threads: int, log: Callable[[str], None]):
+    """Chemin rapide puis, si nécessaire, convert_images de l'outil pour ce qu'il n'a pas traité."""
+    images_mod = tool["images"]
+    try:
+        fast = pipeline_convert_images(tool, paths, options, progress, threads)
+    except Exception as exc:
+        first = str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__
+        log(f"  Pipeline indisponible ({first}) : repli sur le chemin classique de l'outil.")
+        return images_mod.convert_images(paths, options, progress)  # type: ignore[attr-defined]
+    successes, failures, cancelled = list(fast.successes), list(fast.failures), fast.cancelled
+    if fast.remaining and not cancelled:
+        log(f"  Pipeline interrompu ({fast.fallback_reason or 'raison inconnue'}) : "
+            f"{len(fast.remaining)} image(s) confiée(s) au chemin classique de l'outil.")
+        slow = images_mod.convert_images(fast.remaining, options, progress)  # type: ignore[attr-defined]
+        successes += list(slow.successes)
+        failures += list(slow.failures)
+        cancelled = bool(slow.cancelled)
+    return images_mod.ImageBatchResult(successes, failures, cancelled, "", None)  # type: ignore[attr-defined]
+
+
 def _commit_output(job: Job, produced: Path, game: Path | None, manifest: dict | None) -> None:
     """Place le fichier produit à sa destination (sauvegarde préalable en mode remplacement)."""
     if job.backup is not None:
@@ -1395,6 +1725,14 @@ def run_plan(
             last_tick[0] = now
             on_progress(progress)
 
+    use_pipeline = bool(getattr(run, "pipeline", True))
+    cpu_threads = int(getattr(run, "cpu_threads", 0) or 0)
+    if image_jobs:
+        if use_pipeline:
+            log(T("core.msg.pipeline_on", threads=cpu_threads if cpu_threads > 0 else default_cpu_threads()))
+        else:
+            log(T("core.msg.pipeline_off"))
+
     try:
         for idx, (fmt, chunk) in enumerate(chunks, 1):
             if cancel.is_set():
@@ -1421,7 +1759,10 @@ def run_plan(
             progress.chunk_fraction = 0.0
             opts = _image_options(images_mod, dlss, fmt, factor)
             try:
-                result = images_mod.convert_images(paths, opts, tool_progress)
+                if use_pipeline:
+                    result = _convert_images_auto(tool, paths, opts, tool_progress, cpu_threads, log)
+                else:
+                    result = images_mod.convert_images(paths, opts, tool_progress)
             except Exception as exc:
                 # Un échec global du lot (runtime, GPU) ne doit pas arrêter le reste : on note et on continue.
                 first_line = str(exc).splitlines()[0] if str(exc) else "erreur inconnue"
