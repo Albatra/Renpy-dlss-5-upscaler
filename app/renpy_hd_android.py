@@ -1188,7 +1188,10 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
     external = cfg.data_mode == "external"
     pack_dir = pack_dir_for(cfg) if external else None
     link = False
-    image_mode = cfg.image_mode if (external and a.hd2x_dir is not None and cfg.image_mode in IMAGE_MODES) else "original"
+    # « improved » (hd2x réduit à la taille d'origine) vaut aussi pour les données dans l'APK (même taille de fichiers) ;
+    # « hd2x » (dossier HD complet + hook) n'a de sens qu'en données séparées (trop lourd pour un APK).
+    image_mode = cfg.image_mode if (a.hd2x_dir is not None and cfg.image_mode in IMAGE_MODES
+                                    and (external or cfg.image_mode == "improved")) else "original"
     res.image_mode = image_mode
     improve_jobs: list[tuple[Path, Path, Path]] = []      # (hd2x source, destination du pack, original)
     if external and pack_dir is not None:
@@ -1241,7 +1244,11 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
         else:
             dst = build_dir / "game" / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(sp, dst)
+            hd = hd2x_counterpart(a.hd2x_dir, rel) if (image_mode == "improved" and ext in core.IMAGE_EXTS) else None
+            if hd is not None:
+                improve_jobs.append((hd, dst, sp))          # image améliorée générée dans la copie de construction
+            else:
+                shutil.copy2(sp, dst)
             res.files += 1
             res.bytes += size
             if ext in core.IMAGE_EXTS:
@@ -1322,11 +1329,15 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
             size = item.stat().st_size
             place(item, item.name, size)
             tick(size, item.name)
-    if external and pack_dir is not None and image_mode == "improved" and improve_jobs:
+    if image_mode == "improved" and improve_jobs:
         # images améliorées à la taille d'origine : réduction Lanczos des sorties DLSS (pool de threads, reprise = fichiers existants gardés)
         done, skipped, failed, gen_bytes = improve_images(improve_jobs, log, on_progress, cancel, t0)
         res.improved, res.improved_skipped, res.improved_failed = done + skipped, skipped, failed
-        res.pack_bytes += gen_bytes - sum(j[2].stat().st_size for j in improve_jobs if j[2].is_file())
+        delta = gen_bytes - sum(j[2].stat().st_size for j in improve_jobs if j[2].is_file())
+        if external and pack_dir is not None:
+            res.pack_bytes += delta
+        else:
+            res.bytes += delta
     if external and pack_dir is not None and image_mode == "hd2x" and a.hd2x_dir is not None:
         # dossier hd2x complet dans le pack (liens) + hook zz_dlss_hd.rpy dans l'APK avec un cache d'images adapté au téléphone
         hd_dst = pack_dir / "game" / "hd2x"
