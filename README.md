@@ -70,6 +70,10 @@ setup.bat
   dependency lived on the closed bintray repository) and builds with the exact SDK, so the game's compiled scripts run
   as-is (verified by a real launch with Ren'Py 7.3.5). *Verify (launch on PC)* in *My APKs* starts any build copy with its
   SDK and checks the `start` label, the main menu and the data pack. HD 2x images and DLSS backups are never included.
+  **Ren'Py 6.99 games** build too, through the *arm64 route*: their RAPT (32-bit Python 2, dead Gradle repositories) is
+  not revived — the `.rpyc` are decompiled with unrpyc 1.x, the copy keeps the game's `script_version` so the engine
+  applies its 6.99 compatibility settings, known 6.99 → 7.x script incompatibilities are fixed automatically
+  (`screen name tag x:` …) and the 7.8.7 SDK builds a universal arm64 APK (verified on DMD Chapter 1, Ren'Py 6.99.14).
   **DLSS images on the phone** (step 3 *Images*): *Improved, original size* (default) ships each DLSS output downscaled
   back to the original pixel size — the neural-rendering gain without 4× heavier textures; *Full HD 2x + hook* ships
   `hd2x/` as-is with the hook (image cache capped at 512 MB — good for 720p→1440p games, too heavy for 1080p→4K).

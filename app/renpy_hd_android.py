@@ -115,6 +115,8 @@ def family_for(version: str) -> str:
     if entry:
         return entry["family"]
     v = vtuple(version)
+    if v < (7, 0, 0):
+        return RENPY6_FAMILY
     if v < (7, 4, 0):
         return "legacy"
     if v < (7, 7, 0) or (8, 0, 0) <= v < (8, 2, 0):
@@ -150,10 +152,16 @@ def known_versions(refresh: bool = False, timeout: int = 15) -> tuple[list[str],
 
 
 def resolve_sdk_version(game_version: str, versions: list[str] | None = None) -> tuple[str, str]:
-    """SDK à utiliser pour un jeu : (version, raison) — raison ∈ exact, same_minor, same_major, unsupported, unknown."""
+    """SDK à utiliser pour un jeu : (version, raison) — raison ∈ exact, same_minor, same_major, arm64_route, unsupported, unknown.
+    arm64_route : famille dont le RAPT natif est inutilisable (Ren'Py 6.99 : Python 2 / 32 bits seulement, dépendances Gradle mortes) —
+    le jeu est construit par décompilation + SDK de la route arm64 (7.8.7), voir `arm64_route_for`."""
     v = vtuple(game_version)
     if v < vtuple(load_matrix()["fallback"]["min_supported"]):
         return "", "unsupported"
+    entry = matrix_entry(game_version)
+    if entry and entry.get("unsupported_native"):
+        route = arm64_route_for(entry["family"])
+        return (route, "arm64_route") if route else ("", "unsupported")
     if versions is None:
         versions, _online = known_versions()
     vs = sorted({vtuple(x) for x in versions})
@@ -166,6 +174,25 @@ def resolve_sdk_version(game_version: str, versions: list[str] | None = None) ->
     if same_major:
         return vstr(same_major[-1]), "same_major"
     return "", "unknown"
+
+
+def arm64_route_for(family: str) -> str:
+    """SDK de la route arm64 (décompilation unrpyc + recompilation) d'une famille : `arm64_route` de la matrice, sinon ARM64_LEGACY_SDK."""
+    fam = load_matrix()["families"].get(family) or {}
+    route = str(fam.get("arm64_route") or "")
+    # la famille legacy documente sa route dans ce même champ (texte) : seule une vraie version compte
+    return route if re.fullmatch(r"\d+\.\d+\.\d+", route) else ARM64_LEGACY_SDK
+
+
+def arm64_required(family: str) -> bool:
+    """Famille dont le RAPT natif est inutilisable (Ren'Py 6.99, `unsupported_native`) : la route arm64 est la seule construction."""
+    fam = load_matrix()["families"].get(family) or {}
+    return bool(fam.get("unsupported_native"))
+
+
+def arm64_possible(family: str) -> bool:
+    """Familles pour lesquelles la route arm64 existe : 7.0–7.3 (en option, téléphones 64 bits) et 6.99 (obligatoire)."""
+    return family == "legacy" or arm64_required(family)
 
 
 def installed_sdk_versions() -> list[str]:
@@ -219,6 +246,15 @@ class AndroidAnalysis:
     config_version: str = ""
     window_icon: Path | None = None
     notes: list[str] = field(default_factory=list)
+
+    @property
+    def arm64_required(self) -> bool:
+        """Ren'Py 6.99 : pas de RAPT natif utilisable, construction par décompilation + SDK de la route arm64 obligatoire."""
+        return arm64_required(self.family)
+
+    @property
+    def arm64_possible(self) -> bool:
+        return arm64_possible(self.family)
 
     @property
     def included_bytes(self) -> int:
@@ -884,6 +920,8 @@ HD2X_ANDROID_CACHE_MB = 512
 
 
 ARM64_LEGACY_SDK = "7.8.7"           # dernier Ren'Py 7 (Python 2) : produit arm64-v8a + armeabi-v7a + x86_64 ; recompile les .rpy décompilés
+RENPY6_FAMILY = "renpy6"             # famille Ren'Py 6.99 de la matrice : RAPT natif inutilisable, route arm64 obligatoire (unrpyc 1.x + SDK 7.8.7)
+SCRIPT_VERSION_MARKER = "script_version.rpy"   # présent dans game\ de la copie : le lanceur du SDK n'écrit pas SON script_version.txt (00compat)
 
 
 def slug(name: str) -> str:
@@ -906,7 +944,7 @@ def sdk_matches_game(sdk_version: str, game_version: str) -> bool:
 
 def default_config(a: AndroidAnalysis, sdk_version: str = "") -> BuildConfig:
     cfg = BuildConfig()
-    cfg.prefer_rpyc = bool(sdk_version) and not sdk_matches_game(sdk_version, a.version) and a.rpyc_count > 0
+    cfg.prefer_rpyc = bool(sdk_version) and not sdk_matches_game(sdk_version, a.version) and a.rpyc_count > 0 and not a.arm64_required
     ex = a.existing_json or {}
     name = a.config_name or a.build_name or a.root.name
     cfg.name = str(ex.get("name") or name)
@@ -927,6 +965,7 @@ def default_config(a: AndroidAnalysis, sdk_version: str = "") -> BuildConfig:
     cfg.ext_audio = a.audio_bytes > EXT_AUDIO_THRESHOLD
     cfg.image_mode = "improved" if a.hd2x_dir is not None else "original"
     cfg.hd2x_cache_mb = HD2X_ANDROID_CACHE_MB
+    cfg.arm64_legacy = a.arm64_required          # Ren'Py 6.99 : seule route possible (cochée d'office dans l'interface)
     return cfg
 
 
@@ -1458,9 +1497,36 @@ def decompile_missing(sdk: SdkInfo, build_dir: Path, missing: list[str], log: Ca
     return ok, errors
 
 
-def decompile_all(sdk: SdkInfo, build_dir: Path, log: Callable[[str], None], cancel: threading.Event) -> tuple[int, list[str], int]:
-    """Route arm64 des jeux 7.0–7.3 : décompile tous les .rpyc sans .rpy de la copie (unrpyc 1.x, Python 2 du SDK), puis supprime
-    tous les .rpyc pour que le SDK recompile les sources. Renvoie (décompilés, échecs, .rpyc supprimés)."""
+def script_version_tuple(game_version: str) -> tuple[int, ...]:
+    """Tuple `config.script_version` du jeu d'origine : (6, 99, 14, 1) pour 6.99.14.1.3218, (7, 1, 0) pour 7.1.0, (8, 3, 4) pour
+    8.3.4.24120703 — comme le lanceur (version_tuple sans vc_version)."""
+    nums = [int(n) for n in re.findall(r"\d+", game_version or "")]
+    if len(nums) >= 4 and nums[3] < 1000:
+        return tuple(nums[:4])
+    return tuple(nums[:3]) if len(nums) >= 3 else tuple(nums + [0] * (3 - len(nums)))
+
+
+def write_script_version(build_dir: Path, game_version: str, log: Callable[[str], None]) -> tuple[int, ...] | None:
+    r"""Route arm64 : game\script_version.txt de la copie = version du jeu d'origine (00compat.rpy du SDK applique alors les réglages
+    de compatibilité de cette version : styles, keymap, keyword_after_python…) + marqueur script_version.rpy pour que la distribution
+    du lanceur n'ajoute pas son propre script_version.txt (celui du SDK, ex. (7, 8, 7), qui primerait sur le fichier du jeu)."""
+    game = build_dir / "game"
+    sv = script_version_tuple(game_version)
+    if len(sv) < 3 or sv[0] < 6:
+        return None
+    (game / "script_version.txt").write_text(repr(sv), encoding="utf-8")
+    (game / SCRIPT_VERSION_MARKER).write_text(
+        "# RenPyHD - marqueur : la version de script du jeu d'origine est dans script_version.txt (ne pas supprimer).\n"
+        "# RenPyHD marker: the original game's script version lives in script_version.txt (keep this file).\n", encoding="utf-8")
+    log(T("android.log.script_version", version=repr(sv)))
+    return sv
+
+
+def decompile_all(sdk: SdkInfo, build_dir: Path, log: Callable[[str], None], cancel: threading.Event,
+                  game_version: str = "") -> tuple[int, list[str], int]:
+    """Route arm64 des jeux 6.99 et 7.0–7.3 : décompile tous les .rpyc sans .rpy de la copie (unrpyc 1.x, Python 2 du SDK), puis
+    supprime tous les .rpyc pour que le SDK recompile les sources ; `game_version` : écrit script_version.txt (version du jeu
+    d'origine, compatibilité 00compat). Renvoie (décompilés, échecs, .rpyc supprimés)."""
     game = build_dir / "game"
     missing = []
     for f in game.rglob("*.rpyc"):
@@ -1474,27 +1540,65 @@ def decompile_all(sdk: SdkInfo, build_dir: Path, log: Callable[[str], None], can
             f.unlink()
             removed += 1
     log(T("android.log.rpyc_removed", n=removed))
+    if game_version:
+        write_script_version(build_dir, game_version, log)
     return ok, errors, removed
 
 
 _COMPILE_ERR_RE = re.compile(r'^File "([^"]+)", line (\d+): (.*)$')
+_SCREEN_TAG_RE = re.compile(r"^(\s*)screen\s+(\w+)(\s*\([^)]*\))?(.*?)\s+tag\s+(\w+)(.*?):\s*$")
+_BLOCK_OPENERS = ("if ", "elif ", "else", "while ", "for ", "menu", "label ", "screen ", "init", "python", "translate ", "layeredimage",
+                  "style ", "transform ", "define ", "default ")
+_LEGACY_SCREEN_PROPS = ("hover_sound", "activate_sound", "clicked", "hovered", "unhovered")   # (réservé) propriétés SL1 sans équivalent
+
+
+def _prev_code_line(lines: list[str], idx: int) -> int:
+    """Indice de la dernière ligne non vide / non commentaire avant `idx`, ou -1."""
+    j = idx - 1
+    while j >= 0 and (not lines[j].strip() or lines[j].lstrip().startswith("#")):
+        j -= 1
+    return j
 
 
 def fix_script_line(lines: list[str], idx: int, message: str) -> str:
-    """Corrige, quand c'est un motif connu, la ligne `idx` (0-based) d'un script décompilé refusé par un Ren'Py plus récent.
-    Renvoie le nom du motif appliqué, ou "" si rien n'a été changé. Motifs :
+    """Corrige, quand c'est un motif connu, la ligne `idx` (0-based) d'un script (décompilé ou fourni) refusé par un Ren'Py plus récent
+    que celui du jeu. Renvoie le nom du motif appliqué, ou "" si rien n'a été changé (l'erreur est alors rapportée telle quelle). Motifs :
       empty_block : « expected a non-empty block » — `with dissolve:` / `show x:` etc. sans corps : le deux-points final est retiré ;
-      trailing_colon_stmt : instruction suivie d'un deux-points mais d'aucun bloc (même correction, autre message) ;
-      bad_indent : « indentation mismatch » sur une ligne vide ou faite d'espaces : la ligne est vidée."""
+      bad_indent : « indentation mismatch » sur une ligne vide ou faite d'espaces : la ligne est vidée ;
+      screen_tag_inline (Ren'Py 6.99 → 7.x) : `screen nom tag x:` — depuis 7.x le mot-clé tag sur la ligne d'en-tête refuse le bloc
+        (« the preceding tag statement does not expect a block ») : `tag x` est déplacé en première ligne du bloc ;
+      header_keyword_block (6.99 → 7.x) : même erreur pour un autre mot-clé d'en-tête (`modal`, `zorder`, `variant`…) : idem ;
+      stray_colon : « expected statement » / « end of line expected » sur une ligne se terminant par un deux-points sans bloc."""
     if idx < 0 or idx >= len(lines):
         return ""
     line = lines[idx]
     low = message.lower()
-    if "expected a non-empty block" in low or "expected statement" in low and line.rstrip().endswith(":"):
+    if "does not expect a block" in low:
+        # la ligne signalée est la première du bloc : l'en-tête fautif est la ligne de code précédente
+        j = _prev_code_line(lines, idx)
+        if j >= 0:
+            m = _SCREEN_TAG_RE.match(lines[j].rstrip("\r\n"))
+            if m:
+                indent, name, params, before, tag, after = m.groups()
+                eol = lines[j][len(lines[j].rstrip("\r\n")):] or "\n"
+                body_indent = re.match(r"^\s*", line).group(0) if line.strip() else indent + "    "
+                lines[j] = f"{indent}screen {name}{params or ''}{before}{after}:{eol}"
+                lines.insert(j + 1, f"{body_indent}tag {tag}{eol}")
+                return "screen_tag_inline"
+            m2 = re.match(r"^(\s*)screen\s+(\w+)(\s*\([^)]*\))?\s+((?:modal|zorder|variant|predict|layer|sensitive|roll_forward)\s+\S.*?):\s*$", lines[j].rstrip("\r\n"))
+            if m2:
+                indent, name, params, props = m2.groups()
+                eol = lines[j][len(lines[j].rstrip("\r\n")):] or "\n"
+                body_indent = re.match(r"^\s*", line).group(0) if line.strip() else indent + "    "
+                lines[j] = f"{indent}screen {name}{params or ''}:{eol}"
+                lines.insert(j + 1, f"{body_indent}{props}{eol}")
+                return "header_keyword_block"
+    # « expected a non-empty block » (7.x) / « scene statement expects a non-empty block. » (7.8.7) : `scene x:` / `with y:` sans corps
+    if "non-empty block" in low or (("expected statement" in low or "end of line expected" in low) and line.rstrip().endswith(":")):
         stripped = line.rstrip()
-        if stripped.endswith(":") and not stripped.lstrip().startswith(("if ", "elif ", "else", "while ", "for ", "menu", "label ", "screen ", "init", "python", "translate ", "layeredimage", "style ", "transform ", "define ", "default ")):
+        if stripped.endswith(":") and not stripped.lstrip().startswith(_BLOCK_OPENERS):
             lines[idx] = stripped[:-1] + line[len(stripped):]
-            return "empty_block"
+            return "empty_block" if "non-empty" in low else "stray_colon"
     if "indentation mismatch" in low and not line.strip():
         lines[idx] = ""
         return "bad_indent"
@@ -1534,21 +1638,28 @@ def compile_and_fix(sdk: SdkInfo, build_dir: Path, log: Callable[[str], None], c
             return res
         fixed_any = False
         seen = set()
+        by_file: dict[str, list[tuple[int, str]]] = {}
         for fn, lineno, msg in errors:
             key = (fn, lineno)
             if key in seen:
                 continue
             seen.add(key)
+            by_file.setdefault(fn, []).append((lineno, msg))
+        for fn, items in by_file.items():
             path = build_dir / fn if not Path(fn).is_absolute() else Path(fn)
             if not path.is_file():
                 continue
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines(True)
-            pattern = fix_script_line(lines, lineno - 1, msg)
-            if pattern:
+            changed = False
+            # de la dernière ligne à la première : une correction qui insère ou retire des lignes ne décale pas les suivantes
+            for lineno, msg in sorted(items, reverse=True):
+                pattern = fix_script_line(lines, lineno - 1, msg)
+                if pattern:
+                    res["fixes"].append((fn, lineno, pattern))
+                    log(T("android.log.fix_applied", file=fn, line=lineno, pattern=pattern))
+                    fixed_any = changed = True
+            if changed:
                 path.write_text("".join(lines), encoding="utf-8")
-                res["fixes"].append((fn, lineno, pattern))
-                log(T("android.log.fix_applied", file=fn, line=lineno, pattern=pattern))
-                fixed_any = True
         if not fixed_any:
             res["errors"] = [f"{fn}:{lineno}: {msg}" for fn, lineno, msg in errors] or [ln for ln in text.splitlines() if "Error" in ln or "error" in ln][-5:] or [f"rc={proc.returncode}"]
             log(T("android.log.compile_failed", n=len(res["errors"])))

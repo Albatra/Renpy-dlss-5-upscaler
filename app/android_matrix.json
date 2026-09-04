@@ -27,6 +27,23 @@
     "8.0.0", "8.0.1", "8.0.2", "8.0.3", "8.1.0", "8.1.1", "8.1.2", "8.1.3", "8.2.0", "8.2.1", "8.2.2", "8.2.3", "8.3.0", "8.3.1", "8.3.2", "8.3.3", "8.3.4", "8.3.5", "8.3.6", "8.3.7",
     "8.4.0", "8.4.1", "8.5.0", "8.5.1", "8.5.2", "8.5.3", "8.6.0"],
   "families": {
+    "renpy6": {
+      "label": "Ren'Py 6.99 (RAPT natif inutilisable : route arm64 obligatoire)",
+      "unsupported_native": true,
+      "arm64_route": "7.8.7",
+      "jdk": "21",
+      "python": "py2",
+      "sdk_python": ["lib/py2-windows-x86_64/python.exe"],
+      "android_tools_archive": "",
+      "keys": "project",
+      "android_json_keys": [],
+      "install_command": [],
+      "build_command": [],
+      "bundle": false,
+      "outputs": "aucune construction native : voir arm64_route",
+      "arm64_route_notes": "RAPT 6.99 : Python 2 32 bits (lib/windows-i686) seulement, Gradle/AGP d'époque avec dépôts fermés, pas d'ABI arm64-v8a — non ravivé. Route RenPyHD (BuildConfig.arm64_legacy forcé, case cochée et verrouillée) : copie de construction, décompilation unrpyc 1.3.2 (pickles Python 2, vérifié sur les .rpyc 6.99.14) de tous les .rpyc sans .rpy, suppression des .rpyc, game/script_version.txt = version du jeu (ex. (6, 99, 14, 1)) + marqueur script_version.rpy (la distribution du lanceur 7.8.7 n'écrit alors pas son propre (7, 8, 7) : 00compat.rpy applique les réglages de compatibilité 6.99), `renpy.py <copie> compile` avec le SDK 7.8.7 + corrections automatiques (fix_script_line : screen_tag_inline « screen nom tag x: » refusé depuis 7.x, header_keyword_block, empty_block, stray_colon, bad_indent), puis android_build 7.8.7 → APK universel arm64-v8a + armeabi-v7a + x86_64. Vérifié 2026-09-04 sur DMD Chapitre 1 (Ren'Py 6.99.14.1.3218, voir rapport).",
+      "caveat": "Ren'Py 7.8.7 exécute les scripts 6.99 via config.script_version (thèmes theme.*, layout.*, styles anciens conservés dans renpy/common) ; les usages Python retirés entre 6.99 et 7.8 (ui.* supprimés, propriétés de style disparues) ne sont pas corrigés automatiquement : ils apparaissent au lancement (« Vérifier », étape 5)."
+    },
     "legacy": {
       "label": "Ren'Py 7.0 – 7.3 (RAPT ancien)",
       "jdk": "8",
@@ -72,6 +89,7 @@
     }
   },
   "versions": [
+    {"min": "6.99.0", "max": "6.99.99", "family": "renpy6", "unsupported_native": true, "arm64_route": "7.8.7", "sdk_tools": "", "platform": "", "gradle": "", "agp": "", "jdk": "21", "keys": "project", "confirmed": "6.99.14.1 : RAPT natif non ravivé ; route arm64 (unrpyc 1.3.2 + SDK 7.8.7) vérifiée le 2026-09-04 sur DMD Chapitre 1 (13 .rpyc décompilés, corrections screen_tag_inline, APK universel, lancement sur PC OK)"},
     {"min": "7.0.0", "max": "7.3.5", "family": "legacy", "sdk_tools": "4333796", "platform": "android-28", "gradle": "4.4", "agp": "3.1.3", "jdk": "8", "confirmed": "7.3.5 : SDK + RAPT téléchargés, installation Android SDK et clés OK ; construction avec prototype patché (sans expansion bintray) réussie le 2026-09-03 (A Mother's Love, 121 s) et vérifiée par lancement sur PC (label start, menu principal, images du pack) ; 7.0–7.2 : même patch attendu, non testés (utiliser « Vérifier »)"},
     {"min": "7.4.0", "max": "7.4.11", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-30", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "7.4.11 : archive RAPT inspectée (déduit)"},
     {"min": "7.5.0", "max": "7.5.3", "family": "gradle6", "sdk_tools": "7583922_latest", "platform": "android-33", "gradle": "6.1.1", "agp": "4.0.1", "jdk": "8", "keys": "rapt", "confirmed": "7.5.3 : archive RAPT inspectée (déduit)"},
@@ -87,8 +105,8 @@
     {"min": "8.6.0", "max": "8.99.99", "family": "modern", "sdk_tools": "11076708_latest", "platform": "android-36", "gradle": "9.1.0", "agp": "8.13.0", "jdk": "21", "keys": "project", "confirmed": "8.6.0 : SDK + RAPT téléchargés, installation Android SDK OK (voir rapport)"}
   ],
   "fallback": {
-    "_comment": "Version absente du site : correctif supérieur de la même mineure, sinon dernière version de la même majeure, avec avertissement. Version < 7.0 : non prise en charge (RAPT Python 2 / Android SDK obsolètes).",
+    "_comment": "Version absente du site : correctif supérieur de la même mineure, sinon dernière version de la même majeure, avec avertissement. Ren'Py 6.99 : famille renpy6 (unsupported_native) → resolve_sdk_version renvoie (arm64_route, 'arm64_route') sans consulter renpy.org. Version < 6.99 : non prise en charge (RAPT Python 2 / Android SDK obsolètes, pickles trop anciens pour unrpyc 1.3.2 non vérifiés).",
     "unknown_major": "modern",
-    "min_supported": "7.0.0"
+    "min_supported": "6.99.0"
   }
 }

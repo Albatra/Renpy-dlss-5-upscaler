@@ -95,6 +95,23 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   Samsung Galaxy Z Fold 6 (Android 16, arm64-v8a only) with the 6 GB data pack pushed over adb (209 s, 29 MB/s).
   On Android 11+ the folders created by `adb push` belong to the `shell` user and the app got `Permission denied`
   listing `files/game`: the push now ends with `chmod -R a+rX` (verified: Ren'Py then loads the pack on the phone).
+- **Ren'Py 6.99 games** (previously refused as "too old"): the native 6.99 RAPT (32-bit Python 2 only, dead Gradle
+  dependencies, no arm64) is not revived — the game goes through the arm64 route. `android_matrix.json` gets a `renpy6`
+  family (`unsupported_native`, `arm64_route: 7.8.7`, `min_supported` 6.99.0); `resolve_sdk_version` answers
+  `(7.8.7, arm64_route)` without consulting renpy.org, step 1 reads "Ren'Py 6.99: built through decompilation + SDK 7.8.7
+  (arm64)" (six languages), the step 2 list proposes 7.8.7 and the *Build for arm64* box is ticked and locked.
+  `decompile_all` now also writes `game/script_version.txt` = the original game's version (plus a `script_version.rpy`
+  marker so the 7.8.7 launcher does not add its own `(7, 8, 7)`), so the engine's `00compat.rpy` applies the 6.99
+  compatibility settings (`theme.*`, old styles, keymap). `compile_and_fix` applies fixes per file from the last line up
+  (insertions no longer shift later errors) and learns the 6.99 → 7.x patterns: `screen_tag_inline` (`screen name tag x:`
+  is refused since 7.x — `tag x` moves to the first line of the block), `header_keyword_block` (same for `modal`,
+  `zorder`, `variant`… on the header line), `stray_colon`; unknown errors are still reported verbatim. unrpyc 1.3.2
+  decompiles the 6.99.14 `.rpyc` (Python 2 pickles) unchanged. Verified on DMD Chapter 1 (Ren'Py 6.99.14.1.3218, 33 GB
+  game with 27 GB of hd2x excluded, separate data pack of 8 982 linked files / 3.3 GB): 13 `.rpyc` decompiled, 15
+  `screen_tag_inline` fixes in `intro.rpy` / `tutorial.rpy` (2 compile rounds), universal APK (arm64-v8a + armeabi-v7a +
+  x86_64, 53.6 MB) in 72 s, PC verify OK (`start` label, script version `(6, 99, 14, 1)`, 3 probe images, main menu).
+  The verify probe now shows the game's `main_menu` screen before the screenshot and records `script_version`.
+  Regression on A Mother's Love (7.3.5) through the same route: build and PC verify OK (see the report).
 - **Verify (launch on PC)** in *My APKs*: runs the build copy with the SDK of the build (`RENPYHD_EXTDATA` pointing to
   the data pack when relevant) and a probe (`renpyhd_verify_probe.rpy`) that checks the `start` label, the probe images
   and the rendered main menu within a timeout; result stored in `build.json` and shown in the table.

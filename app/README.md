@@ -247,6 +247,20 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    corrigées par `fix_script_line` — motifs `empty_block` (deux-points final d'un `with x:` sans bloc), `bad_indent` —
    jusqu'à 5 passes) puis `build_apk` 7.8.7. Vérifié sur Melody (7.1.0) : 23 décompilés, 0 correction, APK universel
    arm64 en 66 s, lancement PC et Galaxy Z Fold 6 (arm64-v8a seulement) OK.
+   **Ren'Py 6.99** (famille `renpy6` de la matrice : `unsupported_native`, `arm64_route` = 7.8.7, `min_supported` 6.99.0) :
+   le RAPT 6.99 (Python 2 32 bits seulement, dépôts Gradle morts, pas d'arm64) n'est pas ravivé ; `resolve_sdk_version`
+   renvoie `(7.8.7, "arm64_route")` sans consulter renpy.org, `AndroidAnalysis.arm64_required` force la route (case
+   cochée et verrouillée, `prefer_rpyc` désactivé). `decompile_all(…, game_version=)` écrit en plus `game/script_version.txt`
+   = version du jeu d'origine (`script_version_tuple`, ex. `(6, 99, 14, 1)`) et le marqueur `script_version.rpy` — sans
+   lui la distribution du lanceur ajoute son propre `(7, 8, 7)` qui prime sur le fichier du jeu — pour que `00compat.rpy`
+   du moteur applique les réglages 6.99 (thèmes `theme.*`, styles anciens, keymap). `compile_and_fix` corrige fichier par
+   fichier de la dernière ligne à la première (les insertions ne décalent pas les erreurs suivantes) ; nouveaux motifs de
+   `fix_script_line` : `screen_tag_inline` (`screen nom tag x:` — depuis 7.x `parse_keyword` appelle `expect_noblock`
+   pour `tag` même sur la ligne d'en-tête : `tag x` est déplacé en première ligne du bloc), `header_keyword_block` (idem
+   `modal`/`zorder`/`variant`… en en-tête), `stray_colon`. Vérifié sur DMD Chapitre 1 (6.99.14.1.3218, unrpyc 1.3.2 :
+   13 `.rpyc` décompilés, 15 corrections `screen_tag_inline`, 2 passes, APK universel 53,6 Mo en 72 s, « Vérifier » OK :
+   label `start`, `config.script_version` = (6, 99, 14, 1), menu principal). La sonde affiche désormais l'écran
+   `main_menu` du jeu avant la capture et note `script_version` dans le rapport.
 3. **Configurer** — `.android.json` (clés RAPT : `package`, `name`, `icon_name`, `version`, `numeric_version`, `orientation`,
    `permissions`, `include_pil`, `include_sqlite`, `layout`, `source`, `expansion`, `google_play_key`, `google_play_salt`,
    `store`, `update_icons`, `update_always` + `heap_size`, `update_keystores` pour 7.4+/8.x), icônes

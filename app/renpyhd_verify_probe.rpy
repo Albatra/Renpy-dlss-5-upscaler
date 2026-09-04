@@ -8,6 +8,11 @@ label before_main_menu:
         _rhd_out = os.environ.get("RENPYHD_PROBE_OUT", "")
         _rhd_rep = {"stage": "before_main_menu", "renpy_version": renpy.version(), "has_start": bool(renpy.has_label("start"))}
         try:
+            # version de script appliquée par 00compat (route arm64 : celle du jeu d'origine, ex. [6, 99, 14, 1] sous un SDK 7.8.7)
+            _rhd_rep["script_version"] = list(config.script_version) if config.script_version else None
+        except Exception:
+            _rhd_rep["script_version"] = None
+        try:
             _rhd_rep["extdata"] = renpyhd_extdata.report()
         except Exception as e:
             _rhd_rep["extdata"] = None
@@ -32,7 +37,16 @@ label before_main_menu:
         if _rhd_out:
             with open(_rhd_out, "w") as _f:
                 _f.write(json.dumps(_rhd_rep, indent=2))
-    # rend le menu principal (les écrans et images du menu sont chargés ici), puis capture et quitte
+    # rend le menu principal : l'écran main_menu du jeu est affiché ici (ses styles, images et actions sont évalués — un thème
+    # 6.99 ou une propriété disparue échouerait à ce moment), puis capture et quitte
+    python:
+        _rhd_rep["main_menu_shown"] = False
+        try:
+            if renpy.has_screen("main_menu"):
+                renpy.show_screen("main_menu")
+                _rhd_rep["main_menu_shown"] = True
+        except Exception as e:
+            _rhd_rep["main_menu_shown"] = "ERROR: " + repr(e)
     $ renpy.pause(2.0, hard=True)
     python:
         _shot = os.environ.get("RENPYHD_PROBE_SHOT", "")

@@ -135,6 +135,11 @@ d'expansion Google Play vivait sur le dépôt bintray fermé) et construit avec 
 tournent tels quels (vérifié par un vrai lancement avec Ren'Py 7.3.5 ; un SDK 7.4+ ne démarre pas ces `.rpyc`). *Vérifier
 (lancement sur PC)* dans *Mes APK* lance n'importe quelle copie de construction avec son SDK et contrôle le label `start`,
 le menu principal et le pack de données. Pas de clé Google Play.
+Les **jeux Ren'Py 6.99** se construisent aussi, par la *route arm64* : leur RAPT (Python 2 32 bits, dépôts Gradle
+fermés) n'est pas ravivé — les `.rpyc` sont décompilés par unrpyc 1.x, la copie garde le `script_version` du jeu pour que
+le moteur applique ses réglages de compatibilité 6.99, les incompatibilités de script 6.99 → 7.x connues sont corrigées
+automatiquement (`screen nom tag x:` …) et le SDK 7.8.7 produit un APK universel arm64 (vérifié sur DMD Chapitre 1,
+Ren'Py 6.99.14).
 
 **Images DLSS sur le téléphone** (étape 3 *Images*) : *Améliorées, taille d'origine* (défaut) livre chaque sortie DLSS
 réduite à la taille d'origine — le gain du rendu neuronal sans textures 4× plus lourdes ; *HD 2x complètes + hook* livre

@@ -1822,7 +1822,9 @@ def _a_cfg_updates(a: android.AndroidAnalysis, sdk_version: str) -> list:
         gr.update(value=cfg.prefer_rpyc, visible=a.rpyc_count > 0),
         {v: k for k, v in DATA_MODE_LABELS.items()}[cfg.data_mode],
         gr.update(value=cfg.ext_audio, label=t("android.cfg.ext_audio", n=a.audio_count, size=core.human_size(a.audio_bytes)), visible=a.audio_count > 0),
-        gr.update(value=a.family == "legacy", label=t("android.cfg.arm64", sdk=android.ARM64_LEGACY_SDK), visible=a.family == "legacy"),
+        # route arm64 : proposée (cochée) pour 7.0–7.3, imposée (cochée, verrouillée) pour Ren'Py 6.99 dont le RAPT natif est inutilisable
+        gr.update(value=a.arm64_possible, visible=a.arm64_possible, interactive=not a.arm64_required,
+                  label=t("android.cfg.arm64_renpy6" if a.arm64_required else "android.cfg.arm64", sdk=android.arm64_route_for(a.family))),
         gr.update(value={v: k for k, v in IMAGE_MODE_LABELS.items()}[cfg.image_mode], visible=a.hd2x_dir is not None,
                   info=t("android.images.info", n=a.hd2x_count, size=core.human_size(a.hd2x_bytes), factor=a.hd2x_factor, cache=android.HD2X_ANDROID_CACHE_MB)
                   if a.hd2x_dir is not None else (t("android.images.backup_info") if a.has_backup else "")),
@@ -1854,7 +1856,10 @@ def android_analyze(game_root: str):
     if reason == "unsupported" or not sdk_version:
         lines.append(t("android.an.summary", version=a.version, sdk="—", reason=t(f"android.reason.{reason}")))
         return ["  \n".join(lines)] + closed + blank_cfg
-    if a.family == "legacy":
+    if a.arm64_required:
+        # Ren'Py 6.99 : RAPT natif inutilisable (Python 2 32 bits, dépôts Gradle fermés) — décompilation unrpyc 1.x + SDK 7.8.7 (arm64)
+        lines.append(t("android.an.renpy6", version=a.version, sdk=sdk_version))
+    elif a.family == "legacy":
         # RAPT 7.0–7.3 patché par RenPyHD (dépendance d'expansion Google Play retirée) : le SDK exact construit et démarre
         # (vérifié 7.3.5) ; les .rpyc du jeu sont compatibles, contrairement à une recompilation par un SDK 7.4+.
         lines.append(t("android.an.legacy_warn", version=a.version, sdk=sdk_version))
@@ -1985,12 +1990,14 @@ def android_build(*v):
         return
     _ANDROID["cfg"] = cfg
     stage_info: dict[str, object] = {}
-    arm64 = bool(cfg.arm64_legacy) and a.family == "legacy"
+    arm64 = (bool(cfg.arm64_legacy) and a.family == "legacy") or a.arm64_required
     if arm64:
-        # route arm64 des jeux 7.0–7.3 : SDK 7.8.7 (Python 2, arm64-v8a) + décompilation unrpyc + recompilation
-        st787 = android.env_status(android.ARM64_LEGACY_SDK)
+        # route arm64 des jeux 7.0–7.3 (option) et 6.99 (obligatoire) : SDK 7.8.7 (Python 2, arm64-v8a) + décompilation unrpyc + recompilation
+        route = android.arm64_route_for(a.family)
+        cfg.arm64_legacy = True
+        st787 = android.env_status(route)
         if not st787.get("ready") or st787.get("jdk") is None or not st787.get("unrpyc"):
-            yield t("android.need_sdk_arm64", version=android.ARM64_LEGACY_SDK), "", "", hidden, ""
+            yield t("android.need_sdk_arm64", version=route), "", "", hidden, ""
             return
         sdk, jdk = st787["sdk"], st787["jdk"]
         cfg.prefer_rpyc = False
@@ -2000,7 +2007,7 @@ def android_build(*v):
         stage_info["stage"] = st
         if arm64:
             log(t("android.decompiling"))
-            ok, errors, removed = android.decompile_all(sdk, st.build_dir, log, cancel)
+            ok, errors, removed = android.decompile_all(sdk, st.build_dir, log, cancel, game_version=a.version)
             stage_info["decompile"] = (ok, errors)
             comp = android.compile_and_fix(sdk, st.build_dir, log, cancel)
             stage_info["compile"] = comp
