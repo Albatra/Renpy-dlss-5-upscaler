@@ -1343,7 +1343,8 @@ def stage_build(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, log: Callabl
                 res.pack_files += 1
                 res.pack_bytes += sz
                 tick(sz, ("hd2x" / rel_hd).as_posix())
-        (build_dir / "game" / core.HOOK_NAME).write_text(core.render_hook("hd2x", int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB)), encoding="utf-8")
+        # compare=False : pas de comparaison avant/après (Maj+J, _DlssCompare) dans l'APK — l'image HD est affichée directement
+        (build_dir / "game" / core.HOOK_NAME).write_text(core.render_hook("hd2x", int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB), compare=False), encoding="utf-8")
         res.hd2x_files = n
         log(T("android.log.hd2x_packed", n=n, size=core.human_size(a.hd2x_bytes), cache=int(cfg.hd2x_cache_mb or HD2X_ANDROID_CACHE_MB)))
     if cfg.zoom and ZOOM_HOOK_SRC.is_file():
@@ -1918,6 +1919,7 @@ def write_build_manifest(a: AndroidAnalysis, cfg: BuildConfig, sdk: SdkInfo, st:
         "data_mode": cfg.data_mode, "image_mode": st.image_mode if st else "original", "improved": st.improved if st else 0,
         "hd2x_files": st.hd2x_files if st else 0, "hd2x_cache_mb": int(cfg.hd2x_cache_mb) if cfg.image_mode == "hd2x" else 0,
         "zoom": bool(st.zoom_hook) if st else False,
+        "compare": (False if (st and st.image_mode == "hd2x") else None),      # hook hd2x de l'APK écrit sans la comparaison avant/après
         "apk": main.name if main else "", "apk_bytes": main.stat().st_size if main else 0,
         "files": [f.name for f in r.files], "bundle": bool(cfg.bundle), "elapsed": r.elapsed,
         "pack_dir": st.pack_dir.name if (st and st.pack_dir) else "", "pack_files": st.pack_files if st else 0, "pack_bytes": st.pack_bytes if st else 0,

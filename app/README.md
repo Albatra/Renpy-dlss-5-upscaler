@@ -45,8 +45,10 @@ RenPyHD\
       écran partagé avant | après — la ligne suit la souris, chaque image est coupée à la même fraction de sa propre largeur —
       et Maj+H affiche les statistiques), « Comparer avant / après », « Améliorer un autre jeu », « Désinstaller le mod ».
       Zoom en jeu en option (`renpyhd_zoom.rpy`, Mode expert › « Installer le zoom en jeu (PC) », case de l'étape 3 côté
-      Android) : double-clic / double-appui = zoom d'un cran centré sur le pointeur, glisser = déplacement, Ctrl + molette,
-      Maj+Z — seul le calque master (décors, personnages) est agrandi, la fenêtre de dialogue ne bouge pas ; pas de pincement.
+      Android) : appui long / clic long (0,45 s) = zoom d'un cran centré sur le pointeur (le relâchement n'avance pas le
+      dialogue), glisser = déplacement, Ctrl + molette, Maj+Z — seul le calque master (décors, personnages) est agrandi, la
+      fenêtre de dialogue ne bouge pas ; pas de pincement. Côté APK (« HD 2x complètes + hook »), `zz_dlss_hd.rpy` est écrit
+      sans la comparaison avant/après (`RENPYHD:COMPARE`).
 
    Un jeu déjà amélioré est reconnu à l'analyse : l'étape 5 s'ouvre directement avec Jouer / Comparer / Désinstaller.
    Tout le reste est dans l'accordéon **Mode expert** en bas de l'onglet (replié par défaut) : mode de traitement, hook,

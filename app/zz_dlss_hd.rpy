@@ -36,6 +36,7 @@ init -1000 python:
 
     _dlss_hd_dir = "hd2x/"  # RENPYHD:DIR
     _dlss_hd_cache_mb = 1536  # RENPYHD:CACHE
+    _dlss_compare_enabled = True  # RENPYHD:COMPARE — False (APK) : image HD directe, pas de Maj+J ni de _DlssCompare
 
     try:
         _dlss_hd_factor = float(renpy.file(_dlss_hd_dir + "factor.txt").read().strip())
@@ -190,6 +191,8 @@ init -1000 python:
                 hd_img = _dlss_orig_Image(hd, **properties)
                 if _dlss_hd_zoom != 1.0:
                     hd_img = _dlss_motion.Transform(hd_img, zoom=_dlss_hd_zoom)
+                if not _dlss_compare_enabled:
+                    return hd_img          # APK : pas de comparaison avant/après, la version HD est affichée directement
                 return _DlssCompare(rv, hd_img)
             _dlss_hd_stats["sd"] += 1
         return rv
@@ -305,7 +308,8 @@ init -1000 python:
     if config.image_cache_size_mb < _dlss_hd_cache_mb:
         config.image_cache_size_mb = _dlss_hd_cache_mb
 
-# Maj+H en jeu : nombre d'images et de vidéos remplacées. Maj+J : HD → original → écran partagé (avant | après).
+# Maj+H en jeu : nombre d'images et de vidéos remplacées. Maj+J : HD → original → écran partagé (avant | après) —
+# seulement si _dlss_compare_enabled (le hook écrit dans un APK n'a pas la comparaison).
 init python:
     def _dlss_hd_report():
         renpy.notify("DLSS HD : %d HD / %d SD (zoom %.3f) — vidéos %d HD / %d SD" % (
@@ -314,7 +318,8 @@ init python:
 
 screen _dlss_hd_hotkey():
     key "shift_K_h" action Function(_dlss_hd_report)
-    key "shift_K_j" action Function(_dlss_view_cycle)
+    if _dlss_compare_enabled:
+        key "shift_K_j" action Function(_dlss_view_cycle)
 
 init python:
     config.overlay_screens.append("_dlss_hd_hotkey")

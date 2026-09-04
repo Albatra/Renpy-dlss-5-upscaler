@@ -1073,10 +1073,13 @@ def human_size(n: float) -> str:
 # ----------------------------------------------------------------------------
 # Hook Ren'Py, désinstallation, restauration
 # ----------------------------------------------------------------------------
-def render_hook(out_name: str, cache_mb: int) -> str:
+def render_hook(out_name: str, cache_mb: int, compare: bool = True) -> str:
+    """Texte du hook zz_dlss_hd.rpy : dossier HD, cache d'images, et compare=False pour retirer la comparaison avant/après
+    (Maj+J, _DlssCompare) — cas de l'APK Android, où l'image HD est affichée directement."""
     text = HOOK_TEMPLATE.read_text(encoding="utf-8")
     text = re.sub(r'(_dlss_hd_dir\s*=\s*)"[^"]*"(\s*# RENPYHD:DIR)', rf'\g<1>"{out_name.strip("/")}/"\g<2>', text)
     text = re.sub(r"(_dlss_hd_cache_mb\s*=\s*)\d+(\s*# RENPYHD:CACHE)", rf"\g<1>{int(cache_mb)}\g<2>", text)
+    text = re.sub(r"(_dlss_compare_enabled\s*=\s*)(True|False)(\s*# RENPYHD:COMPARE)", rf"\g<1>{'True' if compare else 'False'}\g<3>", text)
     return text
 
 
