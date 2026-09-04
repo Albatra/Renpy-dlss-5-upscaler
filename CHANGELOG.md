@@ -111,7 +111,9 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   `screen_tag_inline` fixes in `intro.rpy` / `tutorial.rpy` (2 compile rounds), universal APK (arm64-v8a + armeabi-v7a +
   x86_64, 53.6 MB) in 72 s, PC verify OK (`start` label, script version `(6, 99, 14, 1)`, 3 probe images, main menu).
   The verify probe now shows the game's `main_menu` screen before the screenshot and records `script_version`.
-  Regression on A Mother's Love (7.3.5) through the same route: build and PC verify OK (see the report).
+  Regression on A Mother's Love (7.3.5) through the same route: `script_version.txt` = `(7, 3, 5, 606)`, one
+  `empty_block` fix (`scene x with dissolve:` without a body — the 7.8.7 message is "scene statement expects a non-empty
+  block", which the previous "expected a non-empty block" match never caught), universal APK (71 MB) in 65 s, PC verify OK.
 - **Verify (launch on PC)** in *My APKs*: runs the build copy with the SDK of the build (`RENPYHD_EXTDATA` pointing to
   the data pack when relevant) and a probe (`renpyhd_verify_probe.rpy`) that checks the `start` label, the probe images
   and the rendered main menu within a timeout; result stored in `build.json` and shown in the table.
