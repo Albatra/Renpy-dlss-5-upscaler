@@ -1841,26 +1841,52 @@ def read_text_guess(path: Path) -> tuple[str, str]:
     return raw.decode("utf-8", errors="replace"), "utf-8 (caractères remplacés)"
 
 
+LAST_PARSE_RECOVERED = 0
+
+
 def parse_translated_lines(text: str) -> tuple[dict[str, str], int, int, int]:
     """Lignes « ligneN;texte » (tolère « ligne 1 ; », « Ligne1: », « line1; », « §1§ », « § 1 § »).
-    Renvoie (numéro -> texte, lignes sans numéro, doublons, lignes fusionnées)."""
-    found: dict[str, str] = {}
-    unknown = duplicates = merged = 0
-    for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if not ln.strip():
-            continue
+    Les sites de traduction suppriment parfois le préfixe de quelques lignes tout en gardant la ligne à sa place :
+    une ligne sans numéro est alors rattachée au numéro attendu par sa position (numéro précédent + 1) si ce numéro
+    n'apparaît nulle part ailleurs et si la numérotation qui suit reste cohérente. Renvoie (numéro -> texte,
+    lignes sans numéro non récupérées, doublons, lignes fusionnées) ; LAST_PARSE_RECOVERED = lignes récupérées."""
+    global LAST_PARSE_RECOVERED
+    rows = [ln for ln in text.replace("\r\n", "\n").replace("\r", "\n").split("\n") if ln.strip()]
+    parsed: list[tuple[int | None, str, bool]] = []   # (numéro ou None, texte, fusionnée)
+    for ln in rows:
         m = ID_LINE_RE.match(ln)
         if not m:
-            unknown += 1
+            parsed.append((None, ln.rstrip(), False))
             continue
-        key = str(int(m.group(1) or m.group(2)))
         body = m.group(3).rstrip()
+        fused = False
         if ID_INSIDE_RE.search(body):
-            merged += 1        # deux textes sur une même ligne : on garde la partie avant le second numéro, signalée
+            fused = True
             body = ID_INSIDE_RE.split(body)[0].rstrip()
+        parsed.append((int(m.group(1) or m.group(2)), body, fused))
+    known = {n for n, _b, _f in parsed if n is not None}
+    found: dict[str, str] = {}
+    unknown = duplicates = merged = recovered = 0
+    last: int | None = None
+    for i, (n, body, fused) in enumerate(parsed):
+        if n is None:
+            expected = (last + 1) if last is not None else None
+            nxt = next((m for m, _b, _f in parsed[i + 1:] if m is not None), None)
+            if expected is not None and expected not in known and (nxt is None or nxt > expected):
+                n = expected
+                known.add(n)
+                recovered += 1
+            else:
+                unknown += 1
+                continue
+        if fused:
+            merged += 1
+        key = str(n)
         if key in found:
             duplicates += 1
         found[key] = body
+        last = n
+    LAST_PARSE_RECOVERED = recovered
     return found, unknown, duplicates, merged
 
 
@@ -1893,6 +1919,8 @@ def import_files(tl_dir: Path, paths: list[Path]) -> ImportReport:
         text, enc = read_text_guess(f)
         report.encodings[f.name] = enc
         got, unknown, dup, merged = parse_translated_lines(text)
+        if LAST_PARSE_RECOVERED:
+            report.errors.append(f"{f.name} : {LAST_PARSE_RECOVERED} ligne(s) sans numéro rattachée(s) à leur position (préfixe supprimé par le traducteur)")
         report.lines += len(got) + unknown
         report.unknown += unknown
         report.duplicates += dup
