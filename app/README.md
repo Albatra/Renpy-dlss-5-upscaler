@@ -229,7 +229,7 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    d'origine (Gradle 4.4) n'échouait que sur `com.danikula.expansion` (expansion Google Play, `dl.bintray.com` fermé) ;
    `patch_legacy_rapt` retire ces dépendances et les classes `Downloader*` de `rapt\prototype`, ajoute `mavenCentral()` et
    marque `build.txt` (RAPT recopie le prototype en gardant `local.properties`). Le SDK **exact** est utilisé : un SDK 7.4+
-   ne démarre pas les `.rpyc` d'un jeu 7.3 (« could not find label 'start' »). Vérifié 7.3.5 (A Mother's Love, lancement OK).
+   ne démarre pas les `.rpyc` d'un jeu 7.3 (« could not find label 'start' »). Vérifié 7.3.5 (lancement OK).
    « Vérifier (lancement sur PC) » (`verify_build`, sonde `renpyhd_verify_probe.rpy` copiée dans la copie sous le nom
    `zz_renpyhd_verify.rpy`) : lance `renpy.py <copie>` avec le SDK de la construction et `RENPYHD_EXTDATA` vers le pack,
    contrôle label `start` + images témoins + menu principal rendu (délai 300 s), résultat dans `build.json` (`verified`).
@@ -245,7 +245,7 @@ Tout est rangé dans `android\` à côté de l'application : `sdk\<version>\` (S
    produit que armeabi-v7a + x86_64 ; `decompile_all` (unrpyc 1.3.2 avec le Python 2 du SDK 7.8.7, tous les `.rpyc` sans
    `.rpy`, puis suppression des `.rpyc`), `compile_and_fix` (`renpy.py <copie> compile`, erreurs `File "…", line N:`
    corrigées par `fix_script_line` — motifs `empty_block` (deux-points final d'un `with x:` sans bloc), `bad_indent` —
-   jusqu'à 5 passes) puis `build_apk` 7.8.7. Vérifié sur Melody (7.1.0) : 23 décompilés, 0 correction, APK universel
+   jusqu'à 5 passes) puis `build_apk` 7.8.7. Vérifié sur un jeu Ren'Py 7.1.0 : 23 décompilés, 0 correction, APK universel
    arm64 en 66 s, lancement PC et Galaxy Z Fold 6 (arm64-v8a seulement) OK.
    **Ren'Py 6.99** (famille `renpy6` de la matrice : `unsupported_native`, `arm64_route` = 7.8.7, `min_supported` 6.99.0) :
    le RAPT 6.99 (Python 2 32 bits seulement, dépôts Gradle morts, pas d'arm64) n'est pas ravivé ; `resolve_sdk_version`

@@ -19,7 +19,7 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   Ctrl + wheel around the pointer (the wheel alone keeps rollback), right- or left-button drag. No pinch (Ren'Py reports a
   single finger). The layer transform is re-applied at each interaction
   (`config.interact_callbacks`) so it survives `scene` and rollback; the zoom state lives outside rollback. Verified on PC
-  with Ren'Py 7.3.5 (A Mother's Love copy) and 8.6.0 (the_question): only the master layer moves, clamping, scene change,
+  with Ren'Py 7.3.5 (a Ren'Py 7.3.5 game copy) and 8.6.0 (the_question): only the master layer moves, clamping, scene change,
   reset, lint clean (`ux\20_zoom_*.png`).
 - **Pipelined image processing** (Expert mode › *Pipelined processing (GPU fed continuously)*, on by default, plus
   *Pipeline CPU threads*, 0 = half the logical cores): the tool's `convert_images` decodes, renders and encodes one image
@@ -73,7 +73,7 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
 - **Ren'Py 7.0–7.3 games really build and start**: RAPT 7.0–7.3 only failed on `com.danikula.expansion` (Google Play
   expansion, closed bintray repository). `patch_legacy_rapt` removes those dependencies and the `Downloader*` classes from
   `rapt\prototype`, adds `mavenCentral()` and marks `build.txt`; the exact SDK is then used (an SDK 7.4+ cannot start
-  7.3 `.rpyc`: "could not find label 'start'"). Verified with A Mother's Love (Ren'Py 7.3.5): universal + per-ABI APKs in
+  7.3 `.rpyc`: "could not find label 'start'"). Verified with a Ren'Py 7.3.5 game: universal + per-ABI APKs in
   121 s, desktop launch OK.
 - **Images on the phone** (step 3 « Images », shown when the game has DLSS outputs): *Original*; *Improved, original size
   (recommended, default)* — every image with an `hd2x` counterpart (same path, `.webp/.png/.jpg` alternatives like the
@@ -90,7 +90,7 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
 - **arm64 for Ren'Py 7.0–7.3 games** (*Build for arm64*, step 3): RAPT 7.0–7.2 only produces armeabi-v7a + x86_64 APKs,
   which 64-bit-only phones refuse. The new route decompiles the `.rpyc` with unrpyc 1.x (Python 2 of the 7.8.7 SDK),
   drops the `.rpyc`, runs `renpy.py <copy> compile` with an automatic fix pass (`fix_script_line`: empty `with x:` blocks,
-  stray indentation) and builds with the 7.8.7 SDK → universal arm64-v8a + armeabi-v7a + x86_64 APK. Verified on Melody
+  stray indentation) and builds with the 7.8.7 SDK → universal arm64-v8a + armeabi-v7a + x86_64 APK. Verified on a Ren'Py 7.1.0 game
   (Ren'Py 7.1.0): 23 `.rpyc` decompiled, no fix needed, APK in 66 s, desktop launch OK, then installed and launched on a
   Samsung Galaxy Z Fold 6 (Android 16, arm64-v8a only) with the 6 GB data pack pushed over adb (209 s, 29 MB/s).
   On Android 11+ the folders created by `adb push` belong to the `shell` user and the app got `Permission denied`
@@ -111,7 +111,7 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   `screen_tag_inline` fixes in `intro.rpy` / `tutorial.rpy` (2 compile rounds), universal APK (arm64-v8a + armeabi-v7a +
   x86_64, 53.6 MB) in 72 s, PC verify OK (`start` label, script version `(6, 99, 14, 1)`, 3 probe images, main menu).
   The verify probe now shows the game's `main_menu` screen before the screenshot and records `script_version`.
-  Regression on A Mother's Love (7.3.5) through the same route: `script_version.txt` = `(7, 3, 5, 606)`, one
+  Regression on a Ren'Py 7.3.5 game through the same route: `script_version.txt` = `(7, 3, 5, 606)`, one
   `empty_block` fix (`scene x with dissolve:` without a body — the 7.8.7 message is "scene statement expects a non-empty
   block", which the previous "expected a non-empty block" match never caught), universal APK (71 MB) in 65 s, PC verify OK.
 - **Verify (launch on PC)** in *My APKs*: runs the build copy with the SDK of the build (`RENPYHD_EXTDATA` pointing to
@@ -141,7 +141,7 @@ All notable changes to RenPyHD are documented here. / Toutes les évolutions not
   `.resS` with unchanged data size are patched **in place** (the `.assets` file is not re-serialized); the others go through
   UnityPy `set_image` + `save` (bundles re-packed with their original compression, LZ4 fallback), written to a temp file and
   swapped atomically. Mipmapped textures get their chain regenerated from the improved level 0.
-- Verified on *Man of the House* v1.0.2c (Unity 2018.1.0f2, x86): 3,865 textures (2,803 DXT1, 914 DXT5, 114 RGBA32,
+- Verified on a Unity 2018 game (Unity 2018.1.0f2, x86): 3,865 textures (2,803 DXT1, 914 DXT5, 114 RGBA32,
   26 RGB24, 8 BC7; 3,627 ≥ 256 px, 3,691 streamed in `.resS`, 16 mipmapped) in 33 containers (20 UnityFS bundles);
   round trip read → `set_image` → save → reload OK for every format present; UnityPy 1.25.2.
 

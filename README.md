@@ -81,7 +81,7 @@ setup.bat
   APK or the one matching the device (arm64-v8a > armeabi-v7a > x86_64) and refuses clearly otherwise. 64-bit-only
   phones (Galaxy Z Fold 6, Pixel 7+…) need arm64-v8a, which the original RAPT of Ren'Py 7.0–7.2 games cannot produce:
   tick *Build for arm64* — the `.rpyc` are decompiled with unrpyc, recompiled and packaged by the 7.8.7 SDK (verified on
-  Melody / Ren'Py 7.1.0, installed and launched on a Galaxy Z Fold 6). Then *Launch on the phone*.
+  a Ren'Py 7.1.0 game, installed and launched on a Galaxy Z Fold 6). Then *Launch on the phone*.
   **Big games**: an APK must stay under ≈ 2 GB (4 GB absolute). With *separate data* the APK only holds the engine, the
   scripts, the interface and the audio (a few dozen MB) and **all images and videos, at full size**, go into a data pack
   that is copied to `Android/data/<package>/files/game/` on the phone (adb button, or USB from Windows) — the folder the
@@ -95,7 +95,7 @@ setup.bat
   2. *Back up* every asset file into `_renpyhd_backup\` (never overwritten; *Restore the originals*),
   3. *Settings and preview* (preset, model, minimum size, name / file filters, interface textures skipped, slider + loupe),
   4. *Improve* (batches, progress, cancel, resume), then *Verify by launching the game* (20 s, window capture, Unity log).
-  Verified on *Man of the House* (Unity 2018.1, x86, 3,865 DXT1/DXT5/RGBA32/RGB24/BC7 textures).
+  Verified on a Unity 2018 game (Unity 2018.1, x86, 3,865 DXT1/DXT5/RGBA32/RGB24/BC7 textures).
 
 ## Good to know
 

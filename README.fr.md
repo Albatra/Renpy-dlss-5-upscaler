@@ -149,7 +149,7 @@ réduite à la taille d'origine — le gain du rendu neuronal sans textures 4× 
 l'installation choisit l'APK universel ou celui qui correspond à l'appareil (arm64-v8a > armeabi-v7a > x86_64) et refuse
 clairement sinon. Les téléphones 64 bits seulement (Galaxy Z Fold 6, Pixel 7+…) exigent l'arm64-v8a, que le RAPT d'origine
 des jeux Ren'Py 7.0–7.2 ne produit pas : cochez *Construire pour arm64* — les `.rpyc` sont décompilés par unrpyc,
-recompilés et empaquetés par le SDK 7.8.7 (vérifié sur Melody / Ren'Py 7.1.0, installé et lancé sur un Galaxy Z Fold 6).
+recompilés et empaquetés par le SDK 7.8.7 (vérifié sur un jeu Ren'Py 7.1.0, installé et lancé sur un Galaxy Z Fold 6).
 Puis *Lancer sur le téléphone*.
 
 **Gros jeux (sans réduire les images)** : un APK doit rester sous ≈ 2 Go (4 Go absolus, format ZIP). À l'étape 3, *Données
@@ -185,7 +185,7 @@ cela que le facteur est verrouillé à 1×. Quatre étapes :
    **reprise** (`_renpyhd_unity.json`). Puis **Vérifier en lançant le jeu** (20 s : processus vivant, capture de la fenêtre
    affichée dans l'onglet, journal `Player.log` / `output_log.txt`), **Jouer**, **Restaurer**.
 
-Vérifié sur *Man of the House* v1.0.2c (Unity 2018.1.0f2, x86) : 3 865 textures (DXT1, DXT5, RGBA32, RGB24, BC7) dans 33
+Vérifié sur a Unity 2018 game (Unity 2018.1.0f2, x86) : 3 865 textures (DXT1, DXT5, RGBA32, RGB24, BC7) dans 33
 fichiers dont 20 bundles ; aller-retour lecture → écriture → relecture correct pour chaque format ; jeu relancé après réécriture.
 Limites : formats « crunched » réécrits non compressés (DXT1/DXT5) ; formats exotiques seulement en RGBA32 sur demande ;
 les bundles réécrits grossissent un peu ; l'encodage DXT est avec perte (comme à la création du jeu).
