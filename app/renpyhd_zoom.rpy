@@ -55,7 +55,11 @@ init -900 python in renpyhd_zoom:
 
     # État hors rollback (module Python simple : Ren'Py ne le suit pas) — le zoom reste celui choisi par le joueur,
     # même après un retour arrière ou un changement de décor ; le transform de calque est ré-appliqué à chaque interaction.
-    _st = _types.ModuleType(str("renpyhd_zoom_state"))   # str() : Python 2 refuse un nom unicode
+    # Un objet Python nu suffit (types.ModuleType exige un nom « str » natif : sous Ren'Py 7.4+ le store aliase str vers
+    # unicode et le constructeur plantait — « module.__init__() argument 1 must be string, not unicode »).
+    class _ZoomState(object):
+        pass
+    _st = _ZoomState()
     _st.zoom = 1.0
     _st.x = 0.0          # xpos du calque (<= 0)
     _st.y = 0.0
